@@ -140,3 +140,28 @@ dotnet restore MCP/Source/MCP/MCP.csproj --locked-mode --force
 
 `--force` is not optional here. A restore that considers the project up to date skips the
 lock check entirely and exits 0 without validating anything.
+
+## Tests
+
+```sh
+dotnet test MCP/Tests/MCP.Tests.csproj
+```
+
+No RimWorld installation is needed. The test project compiles `RequestGuard.cs` and
+`NoticeLog.cs` out of `MCP/Source/MCP/` rather than referencing the built mod, because
+neither file touches RimWorld or Unity. They are the same files, not copies: a copy would
+let the tests and the mod drift apart while both stayed green. A new file of that kind has
+to be added to `Compile Include` in `MCP/Tests/MCP.Tests.csproj` before it is covered.
+
+Two things about that project are deliberate. It pins `LangVersion` to the mod's, so that
+syntax the mod cannot compile fails here instead of in a build that needs the game
+installed. And it keeps a `packages.lock.json` of its own, checked the same way:
+
+```sh
+dotnet restore MCP/Tests/MCP.Tests.csproj --locked-mode --force
+```
+
+What the tests cover is what can be decided without the game: which requests the bridge
+refuses, and how it counts what it refused. Anything reached through `HttpListener` or
+`Verse` is checked by hand against a running game, and those steps belong in the task
+document for the change that needs them.
