@@ -61,8 +61,8 @@ Two properties of this repository matter when working from a worktree:
 - The RimWorld `Mods\MCP` symlink described in `README.md` points at the **primary
   checkout**. A build produced inside a worktree is not what the game loads, unless the
   symlink is repointed at that worktree.
-- `MCP/1.6/Assemblies/*.dll` is **tracked** build output. Building produces a diff in the
-  working tree; stage it deliberately rather than by habit.
+- `MCP/1.6/Assemblies/*.dll` is build output and is **not tracked** in this fork. A
+  worktree therefore starts without it, and the mod does nothing until you build.
 
 ## Finishing a piece of work
 
@@ -111,5 +111,27 @@ Two fork-local trees, neither of which is sent upstream:
 
 ## Building and installing
 
-See `README.md`. Note that the `HintPath` entries in `MCP/Source/MCP/MCP.csproj` are
-hard-coded to a GOG installation path and need adjusting for other installations.
+See `README.md` for the build and symlink steps, and pass `RimWorldDir` if RimWorld is
+not at the default GOG location.
+
+Two things differ from upstream in this fork.
+
+**The built assemblies are not tracked.** Upstream commits
+`MCP/1.6/Assemblies/*.dll` on purpose, so that cloning and symlinking is enough to play.
+Here all three are ignored and produced by the build: `MCP.dll` from `Source/`, and
+`0Harmony.dll` and `Newtonsoft.Json.dll` from the package references. The reason is that
+running assemblies a third party committed, with nothing to check them against, is a risk
+the source review does not cover. Two consequences follow: a fresh clone does nothing
+until it is built, and pulling an upstream change to those files will conflict. Keep the
+deletion.
+
+**Package versions are pinned by `MCP/Source/MCP/packages.lock.json`.** It replaces the
+committed binaries as the record of which dependency bytes are expected. To check that
+the resolved graph still matches it:
+
+```sh
+dotnet restore MCP/Source/MCP/MCP.csproj --locked-mode --force
+```
+
+`--force` is not optional here. A restore that considers the project up to date skips the
+lock check entirely and exits 0 without validating anything.

@@ -10,7 +10,12 @@ __pycache__/
 .ruff_cache/
 
 # --- C# / RimWorld mod build output ---
-# Assemblies/*.dll are committed on purpose: they are the distributable mod.
+# The assemblies under 1.6/Assemblies are build output and are not tracked here.
+# MCP.dll is rebuilt from Source/, and the bundled third-party assemblies come from
+# the package references pinned in packages.lock.json. Upstream commits all three on
+# purpose as the distributable mod; this fork deliberately diverges, so pulling an
+# upstream change to them will conflict.
+MCP/1.6/Assemblies/*.dll
 MCP/Source/**/obj/
 MCP/Source/**/bin/
 *.pdb
