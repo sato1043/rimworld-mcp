@@ -12,13 +12,23 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!--
+      Where RimWorld is installed. The default is the GOG location. Override it on the
+      command line with -p:RimWorldDir=... or with a RimWorldDir environment variable,
+      which MSBuild reads as a property of the same name.
+    -->
+    <RimWorldDir Condition="'$(RimWorldDir)' == ''">C:\GOG Games\RimWorld</RimWorldDir>
+    <RimWorldManagedDir>$(RimWorldDir)\RimWorldWin64_Data\Managed</RimWorldManagedDir>
+  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
-      <HintPath>C:\GOG Games\RimWorld\RimWorldWin64_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(RimWorldManagedDir)\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>C:\GOG Games\RimWorld\RimWorldWin64_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(RimWorldManagedDir)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
@@ -29,5 +39,14 @@
     <!-- RimWorld 1.6 no longer ships Newtonsoft.Json — bundle it with the mod -->
     <PackageReference Include="Newtonsoft.Json" Version="13.*" />
   </ItemGroup>
+
+  <!--
+    Without this check, a wrong RimWorldDir surfaces as hundreds of unresolved-type
+    errors that name neither the property nor the path it resolved to.
+  -->
+  <Target Name="CheckRimWorldDir" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(RimWorldManagedDir)\Assembly-CSharp.dll')"
+           Text="RimWorld assemblies not found under $(RimWorldManagedDir). Point the build at your installation, e.g. dotnet build -p:RimWorldDir=&quot;C:\Program Files (x86)\Steam\steamapps\common\RimWorld&quot;" />
+  </Target>
 
 </Project>

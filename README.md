@@ -39,7 +39,16 @@ dotnet build MCP\Source\MCP\MCP.csproj
 
 Output: `MCP\1.6\Assemblies\MCP.dll`
 
-If RimWorld is not installed at `C:\GOG Games\RimWorld\`, update the `HintPath` entries in `MCP.csproj`.
+If RimWorld is not installed at `C:\GOG Games\RimWorld\`, point the build at your own
+installation with `RimWorldDir`:
+
+```powershell
+dotnet build MCP\Source\MCP\MCP.csproj -p:RimWorldDir="C:\Program Files (x86)\Steam\steamapps\common\RimWorld"
+```
+
+Setting a `RimWorldDir` environment variable has the same effect and lets you build
+without the flag. If the RimWorld assemblies are not found, the build stops with a
+message naming the directory it looked in.
 
 ### 2. Symlink the mod into RimWorld (run as Administrator)
 
