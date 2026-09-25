@@ -25,6 +25,7 @@ MCP/Source/**/bin/
 # --- Local tool state ---
 .claude/
 **/.claude/
+.serena/
 
 # --- OS ---
 .DS_Store
