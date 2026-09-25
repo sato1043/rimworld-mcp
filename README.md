@@ -11,7 +11,7 @@ https://github.com/user-attachments/assets/13fe8288-89c6-4997-b60b-abb8ed5c82c2
 ```
 mcp_server/main.py   (Python, FastMCP)
       |
-      | HTTP  localhost:8080
+      | HTTP  127.0.0.1:8080
       v
 MCP/ C# mod          (runs inside RimWorld)
       |
@@ -60,6 +60,12 @@ New-Item -ItemType SymbolicLink `
 
 Enable **MCP** in the RimWorld mod manager, then start a game. The HTTP bridge starts automatically on port 8080.
 
+Requests are served only while a save is loaded, and only while the game keeps
+updating. RimWorld stops updating when its window loses focus unless **Run in
+background** (Options → General) is on — and an MCP client always runs in another
+window. With the option off, a request sent while the game window is out of focus
+waits 15 seconds and fails with `503 Game thread timeout`.
+
 ### 3. Connect the MCP server
 
 **Dev / inspect mode:**
@@ -74,7 +80,7 @@ cd mcp_server
 uv run mcp install main.py --name "RimWorld"
 ```
 
-Verify the bridge is reachable: `curl http://localhost:8080/ping` should return `{"status":"pong"}`.
+Verify the bridge is reachable: `curl http://127.0.0.1:8080/ping` should return `{"status":"pong"}`.
 
 ## What Claude can do
 
