@@ -10,6 +10,15 @@
     <OutputPath>..\..\1.6\Assemblies\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!--
+      The package references below float (2.* / 13.*), so without a lock file a restore
+      can silently resolve a different build of Harmony or Newtonsoft.Json than the one
+      last verified. packages.lock.json records the resolved version and its content
+      hash, and restoring in locked mode fails instead of drifting. Note that a restore
+      skips that check when the project is already up to date, so force the restore when
+      the check is the point of running it.
+    -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <PropertyGroup>
