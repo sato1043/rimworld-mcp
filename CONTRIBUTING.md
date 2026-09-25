@@ -56,6 +56,11 @@ checkout, so that the repository directory itself stays uncluttered.
 git worktree add ../rimworld-mcp.worktrees/<slug> -b task/<id>-<slug> develop
 ```
 
+Run this from the primary checkout. The path is resolved against the current directory,
+so from inside another worktree it creates
+`rimworld-mcp.worktrees/rimworld-mcp.worktrees/<slug>`. From a worktree, use
+`../<slug>` instead.
+
 Two properties of this repository matter when working from a worktree:
 
 - The RimWorld `Mods\MCP` symlink described in `README.md` points at the **primary
