@@ -22,6 +22,8 @@ RimWorld game APIs
 
 The C# mod starts an HTTP bridge when RimWorld loads. The Python MCP server wraps every endpoint as an MCP tool so Claude (or any MCP client) can read game state and issue commands. All RimWorld API calls are routed through the main game thread — HTTP requests block on a `ManualResetEventSlim` until the next Unity frame processes them.
 
+The bridge listens on loopback only, and it refuses any request that carries a browser's `Origin` or `Sec-Fetch-Site` header, or a `Host` other than `127.0.0.1` — `localhost` included, so address the bridge by IP. Loopback alone is not a boundary: a page open in the player's browser can reach `127.0.0.1` too, and those headers are the ones page script cannot remove. Optionally the bridge can also require a shared secret — see [Require a shared secret](#4-optional-require-a-shared-secret).
+
 ## Prerequisites
 
 - RimWorld 1.6 (GOG or Steam)
@@ -81,6 +83,55 @@ uv run mcp install main.py --name "RimWorld"
 ```
 
 Verify the bridge is reachable: `curl http://127.0.0.1:8080/ping` should return `{"status":"pong"}`.
+
+### 4. (Optional) Require a shared secret
+
+The header checks above stop a browser, but any other program on the machine can still reach the bridge. To require a secret as well, set `RIMWORLD_MCP_TOKEN` to the same value for **both** sides — the game and the MCP server — before starting either.
+
+**Choosing a value.** The bridge compares the whole string, so length is what makes a secret hard to guess, and any characters a header can carry will do. This prints one, run from the repository root:
+
+```powershell
+uv run --project mcp_server python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**What a secret does and does not protect.** It travels in an environment variable, which any program running as you can read — the same programs it is meant to keep out. It stops one that merely found the port open; it does not stop one that goes looking for the value. Changing it means restarting both the game and the MCP server, since each reads it once at startup. The `Origin`, `Sec-Fetch-Site` and content type checks are separate: they hold whether or not a secret is set, and setting one neither strengthens nor replaces them.
+
+The catch is that neither side is normally started from a terminal, and a variable set in one only reaches what that terminal launches.
+
+**For the game.** RimWorld reads the variable once at startup, and a game started from the Steam or GOG launcher inherits the launcher's environment, not your shell's. Set the variable and start the executable from that same shell:
+
+```powershell
+$env:RIMWORLD_MCP_TOKEN = "choose-your-own-value"
+& "C:\Program Files (x86)\Steam\steamapps\common\RimWorld\RimWorldWin64.exe"
+```
+
+The install folder ships a `steam_appid.txt`, so this does not bounce back through Steam. Leave Steam itself running.
+
+**Check that it arrived**, because a game that did not get the secret does not complain — it answers every request normally, and you would be running unprotected while believing otherwise. The bridge says which mode it is in when it starts:
+
+```powershell
+Select-String -Path "$env:USERPROFILE\AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Player.log" -Pattern "\[MCP\]"
+```
+
+Look for `Requests must carry the shared secret in X-MCP-Token.` If you see `No shared secret configured.` instead, the variable did not reach the game.
+
+**For the MCP server.** Claude Desktop launches it, so set the variable for your user account and restart Claude Desktop; a value exported in a shell will not reach it. The Python server sends the secret as `X-MCP-Token` whenever the variable is set.
+
+**Re-check connectivity with the secret.** The check in step 3 carries no header, so repeat it with one:
+
+```powershell
+curl.exe -i -H "X-MCP-Token: choose-your-own-value" http://127.0.0.1:8080/ping
+```
+
+A refused request answers `403` with the reason in the body, for example `{"error":"Missing or wrong X-MCP-Token"}`.
+
+### Upgrading from an earlier version
+
+Three behaviours changed, and none of them is announced at runtime. If you built anything against the bridge before this change, check for them:
+
+- Responses no longer carry `Access-Control-Allow-Origin`, and the bridge refuses any request that carries `Origin` or `Sec-Fetch-Site`. A client running inside a browser can no longer reach it at all — that is the point of the change.
+- A `POST` now has to say its body is JSON. Without `Content-Type: application/json` it answers `415` and nothing reaches the game. This is what keeps a page from reaching the commands even in a browser that sends neither header above: a form cannot send that media type, and asking for it from script forces a preflight, which arrives with `Origin` and is refused. The MCP server already sends the header; a hand-written `curl --data` does not, so add `-H "Content-Type: application/json"`.
+- `OPTIONS` no longer answers `204`. It falls through to `405`, like any other unsupported method.
 
 ## What Claude can do
 

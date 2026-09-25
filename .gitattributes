@@ -2,4 +2,4 @@
 # endings. Marking it as text keeps the copy in the repository normalised and the
 # checkout native, so a restore does not leave the working tree dirty on machines
 # whose core.autocrlf differs.
-MCP/Source/MCP/packages.lock.json text
+packages.lock.json text

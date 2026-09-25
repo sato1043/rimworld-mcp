@@ -6,9 +6,6 @@ namespace MCP
     {
         public static (int statusCode, string body) Handle(PendingRequest req)
         {
-            if (req.Method == "OPTIONS")
-                return (204, "{}");
-
             return req.Method switch
             {
                 "GET"  => HandleGet(req.Path, req.QueryString),

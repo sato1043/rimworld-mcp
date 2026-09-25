@@ -16,8 +16,8 @@ __pycache__/
 # purpose as the distributable mod; this fork deliberately diverges, so pulling an
 # upstream change to them will conflict.
 MCP/1.6/Assemblies/*.dll
-MCP/Source/**/obj/
-MCP/Source/**/bin/
+MCP/**/obj/
+MCP/**/bin/
 *.pdb
 *.user
 *.suo

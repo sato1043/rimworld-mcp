@@ -9,6 +9,10 @@ namespace MCP
 
         public override void GameComponentUpdate()
         {
+            // The request threads record rather than log, because the game's log is
+            // not for them to touch. Writing happens here, on the game thread.
+            MCPHttpServer.Notices.Flush(message => Log.Warning("[MCP] " + message));
+
             while (MCPHttpServer.Queue.TryDequeue(out var req))
             {
                 try

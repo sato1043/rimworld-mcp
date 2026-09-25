@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Not the mod's net472. Nothing here is loaded by RimWorld, so this project
+      follows a supported runtime instead: .NET 8 goes out of support on
+      2026-11-10, and .NET 10 is LTS until 2028-11-14.
+    -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <!--
+      Pinned to the mod's language version. The files below are compiled here and
+      in the mod, and this project's default would be newer: without the pin,
+      syntax the mod cannot compile passes here, and the failure surfaces only in
+      the mod build, which needs a RimWorld installation to run.
+    -->
+    <LangVersion>9</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The guard's own source file, not a copy of it. RequestGuard references nothing from
+      RimWorld or Unity, so the same file compiles here and the truth table can be
+      exercised without launching the game. A copy would let the test and the mod drift
+      apart while both stayed green.
+    -->
+    <Compile Include="..\Source\MCP\RequestGuard.cs" />
+    <Compile Include="..\Source\MCP\NoticeLog.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+  </ItemGroup>
+
+</Project>

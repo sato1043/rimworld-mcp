@@ -9,6 +9,7 @@ or install into Claude Desktop:
     uv run mcp install main.py --name "RimWorld"
 """
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -18,6 +19,73 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 
 RIMWORLD_URL = "http://127.0.0.1:8080"
+
+TOKEN_ENV = "RIMWORLD_MCP_TOKEN"
+TOKEN_HEADER = "X-MCP-Token"
+
+# Read once, here, rather than each time a client is built. The game reads its own
+# copy once at startup, so a value changed after that takes effect on neither side;
+# reading it per call would have made the two resources below disagree with every
+# tool about which secret this process is using.
+TOKEN = os.environ.get(TOKEN_ENV)
+
+# The bridge gives the game thread 15 seconds and then answers 503 saying so. Waiting
+# longer than that here is what lets that answer arrive: matching it would have both
+# sides give up at the same moment, and the caller would see a bare read timeout
+# instead of being told the game is not advancing.
+REQUEST_TIMEOUT = 20.0
+
+
+async def _raise_with_reason(response: httpx.Response) -> None:
+    """Raise with the bridge's own reason rather than a bare status line.
+
+    The bridge answers a refused request with 403 and a JSON body naming the
+    check that refused it. httpx builds its raise_for_status() message from the
+    status and the URL alone, so that reason would reach nobody: a mistyped
+    secret would look exactly like a game that is not running. Raising here,
+    before the response reaches the caller, covers every call site at once,
+    including the two resources below, which check no status of their own.
+
+    The raise_for_status() calls at the call sites stay. They no longer fire,
+    since this runs first, but removing all of them would turn a security fix
+    into a sweep across the whole file.
+    """
+    if response.is_success:
+        return
+
+    await response.aread()
+    reason = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        reason = str(payload.get("error") or "")
+    if not reason:
+        reason = response.text.strip()[:200]
+
+    detail = f": {reason}" if reason else ""
+    raise httpx.HTTPStatusError(
+        f"the RimWorld bridge answered {response.status_code}{detail}",
+        request=response.request,
+        response=response,
+    )
+
+
+def _new_client() -> httpx.AsyncClient:
+    """A client configured to reach the bridge.
+
+    The bridge refuses anything that looks like it came from a browser and, when
+    the player set a shared secret, anything that does not carry it. Every client
+    is built here so that a new call site cannot forget the secret and fail with
+    a 403 that looks like the game is not running.
+    """
+    return httpx.AsyncClient(
+        base_url=RIMWORLD_URL,
+        timeout=REQUEST_TIMEOUT,
+        headers={TOKEN_HEADER: TOKEN} if TOKEN else {},
+        event_hooks={"response": [_raise_with_reason]},
+    )
 
 
 # ── Lifespan: keep a single shared httpx client ───────────────────────────────
@@ -29,7 +97,7 @@ class AppState:
 
 @asynccontextmanager
 async def lifespan(server: FastMCP) -> AsyncIterator[AppState]:
-    async with httpx.AsyncClient(base_url=RIMWORLD_URL, timeout=15.0) as client:
+    async with _new_client() as client:
         yield AppState(http=client)
 
 
@@ -47,14 +115,14 @@ def _client(ctx: Context) -> httpx.AsyncClient:
 @mcp.resource("rimworld://state")
 async def resource_state() -> str:
     """Current game world summary (tick, season, biome, pawn/animal/enemy counts)."""
-    async with httpx.AsyncClient(base_url=RIMWORLD_URL, timeout=15.0) as c:
+    async with _new_client() as c:
         return (await c.get("/state")).text
 
 
 @mcp.resource("rimworld://pawns")
 async def resource_pawns() -> str:
     """All colonist pawns with position, health, job, and skills."""
-    async with httpx.AsyncClient(base_url=RIMWORLD_URL, timeout=15.0) as c:
+    async with _new_client() as c:
         return (await c.get("/pawns")).text
 
 
