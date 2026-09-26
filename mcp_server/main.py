@@ -9,6 +9,7 @@ or install into Claude Desktop:
     uv run mcp install main.py --name "RimWorld"
 """
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -17,6 +18,9 @@ from dataclasses import dataclass
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
+from mcp.types import ToolAnnotations
+
+from shaping import shape_animals, shape_buildings, shape_colonists, shape_training
 
 RIMWORLD_URL = "http://127.0.0.1:8080"
 
@@ -28,6 +32,15 @@ TOKEN_HEADER = "X-MCP-Token"
 # reading it per call would have made the two resources below disagree with every
 # tool about which secret this process is using.
 TOKEN = os.environ.get(TOKEN_ENV)
+
+# A value that cannot be sent as a header would be quoted back in the error that
+# httpx raises on every call, and from there reach the model and any log. Refusing
+# to start, without repeating the value, keeps the secret where it was put.
+if TOKEN and not (TOKEN.isascii() and TOKEN.isprintable() and TOKEN == TOKEN.strip()):
+    raise RuntimeError(
+        f"{TOKEN_ENV} holds a value that cannot be sent as an HTTP header: it has "
+        f"surrounding spaces, control characters or non-ASCII characters. Set it "
+        f"again without them. (The value is not shown here.)")
 
 # The bridge gives the game thread 15 seconds and then answers 503 saying so. Waiting
 # longer than that here is what lets that answer arrive: matching it would have both
@@ -72,19 +85,21 @@ async def _raise_with_reason(response: httpx.Response) -> None:
     )
 
 
-def _new_client() -> httpx.AsyncClient:
+def _new_client(transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
     """A client configured to reach the bridge.
 
     The bridge refuses anything that looks like it came from a browser and, when
     the player set a shared secret, anything that does not carry it. Every client
     is built here so that a new call site cannot forget the secret and fail with
-    a 403 that looks like the game is not running.
+    a 403 that looks like the game is not running. `transport` lets the tests put
+    a stand-in for the bridge under a client that is otherwise the real one.
     """
     return httpx.AsyncClient(
         base_url=RIMWORLD_URL,
         timeout=REQUEST_TIMEOUT,
         headers={TOKEN_HEADER: TOKEN} if TOKEN else {},
         event_hooks={"response": [_raise_with_reason]},
+        transport=transport,
     )
 
 
@@ -148,6 +163,90 @@ async def get_weather(ctx: Context[ServerSession, AppState]) -> dict:
     r = await _client(ctx).get("/weather")
     r.raise_for_status()
     return r.json()
+
+
+# Section name -> bridge path. The bridge answers queued requests on the game's frame.
+# When frames are long (a busy colony), reads sent one after another each wait for a
+# frame, and reads sent together share one; on a light game there is little to save.
+OVERVIEW_READS = {
+    "state": "/state",
+    "alerts": "/alerts",
+    "threats": "/threats",
+    "colony": "/colony",
+    "weather": "/weather",
+    "power": "/power",
+    "messages": "/messages",
+    "colonists": "/pawns",
+}
+
+# Sections trimmed before they are returned. The trimming runs inside the section's
+# read, so an answer of an unexpected shape fails that section alone.
+OVERVIEW_SHAPES = {"colonists": shape_colonists}
+
+# Failures of one read that become that section's "error" instead of failing the tool:
+# HTTP errors, and a body that is not JSON or not of the expected shape.
+_SECTION_FAILURES = (httpx.HTTPError, ValueError)
+
+
+async def _read_section(client: httpx.AsyncClient, name: str):
+    path = OVERVIEW_READS[name]
+    r = await client.get(path)
+    # Checked here rather than left to the client, so that a client that does not
+    # raise on an error status still has the failure folded into its section.
+    r.raise_for_status()
+    data = r.json()
+    shape = OVERVIEW_SHAPES.get(name)
+    if shape is None:
+        return data
+    try:
+        return shape(data)
+    except (KeyError, TypeError, AttributeError) as e:
+        raise ValueError(f"{path} answered in an unexpected shape: {e!r}") from e
+
+
+async def collect_overview(client: httpx.AsyncClient) -> dict:
+    """Read every overview section at once; a section that fails carries its reason.
+
+    Only failures of a read (see _SECTION_FAILURES) are folded into a section.
+    Anything else, cancellation included, propagates. When every section failed,
+    nothing was read at all, and the first failure is raised instead, so that the
+    call fails as any other tool's does when the game cannot be reached.
+    """
+    names = list(OVERVIEW_READS)
+    results = await asyncio.gather(
+        *(_read_section(client, n) for n in names),
+        return_exceptions=True,
+    )
+    overview = {}
+    failures = []
+    for name, result in zip(names, results):
+        if isinstance(result, _SECTION_FAILURES):
+            failures.append(result)
+            # A timeout carries no message; its type is then the only reason there is.
+            overview[name] = {"error": str(result) or type(result).__name__}
+        elif isinstance(result, BaseException):
+            raise result
+        else:
+            overview[name] = result
+    if len(failures) == len(names):
+        raise failures[0]
+    return overview
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_colony_overview(ctx: Context[ServerSession, AppState]) -> dict:
+    """
+    One-call situation report. Its sections hold what these tools return:
+    state (get_game_state), alerts (get_alerts), threats (get_threats), colony
+    (get_colony), weather (get_weather), power (get_power), messages (get_messages,
+    the recent letters), and colonists (get_pawns without skills: each colonist's
+    health, draft state and current job). Prefer this over calling those tools one
+    by one: its reads are sent together, which saves a wait per call when the game
+    is busy. Use the specific tools for detail. A section the game could not answer
+    holds an "error" with the reason instead of data; when no section could be
+    read, the call fails.
+    """
+    return await collect_overview(_client(ctx))
 
 
 # ── Tools: Colonists ──────────────────────────────────────────────────────────
@@ -245,15 +344,26 @@ async def get_pawn_inventory(
 
 # ── Tools: Creatures on map ───────────────────────────────────────────────────
 
-@mcp.tool()
-async def get_animals(ctx: Context[ServerSession, AppState]) -> list:
+# The return type is a union, for which FastMCP would also send the result a second
+# time as structured content. The other tools send text only; so does this one.
+@mcp.tool(structured_output=False)
+async def get_animals(
+    ctx: Context[ServerSession, AppState],
+    race: str = "",
+    detail: bool = False,
+) -> dict | list:
     """
-    All animals on the map: id, name, race, position, health, faction (wild/tame),
-    and current activity. Use ThingID from this list for hunt_animal.
+    Animals on the map. By default: colony animals one by one (id, name, race,
+    health, job), and every other animal as a head count per race and faction.
+    To target an animal, e.g. for hunt_animal, pass race to list that race's animals
+    one by one with ThingID and position. race is matched against the race labels in
+    the default output, which are in the game's display language; a race that
+    matches nothing fails with the races that are on the map. Pass detail=True for
+    every animal one by one; race, when given, takes precedence.
     """
     r = await _client(ctx).get("/animals")
     r.raise_for_status()
-    return r.json()
+    return shape_animals(r.json(), race=race, detail=detail)
 
 
 @mcp.tool()
@@ -294,17 +404,23 @@ async def get_things(ctx: Context[ServerSession, AppState]) -> list:
 
 
 @mcp.tool()
-async def get_buildings(ctx: Context[ServerSession, AppState]) -> dict:
+async def get_buildings(
+    ctx: Context[ServerSession, AppState],
+    detail: bool = False,
+) -> dict:
     """
     Colony building status in three sections:
-    - powered: all buildings with power components showing on/off and power output
-    - damaged: buildings with HP below max
+    - powered: buildings with power components, one line per kind: how many there
+      are, how many are switched on, and their total power output
+    - damaged: buildings with HP below max, one by one
     - summary: count and damage tally grouped by building type
-    Use to find unpowered buildings, damage needing repair, or to audit the base.
+    Pass detail=True to list every powered building one by one with id and position.
+    Use to find kinds with buildings switched off (poweredOn below count), damage
+    needing repair, or to audit the base.
     """
     r = await _client(ctx).get("/buildings")
     r.raise_for_status()
-    return r.json()
+    return shape_buildings(r.json(), detail=detail)
 
 
 @mcp.tool()
@@ -464,7 +580,7 @@ async def hunt_animal(
     """
     Designate an animal for hunting. Colonists with the Hunting work type will
     seek and kill it when they have time.
-    target_id: ThingID of the animal (from get_animals).
+    target_id: ThingID of the animal (from get_animals with race set to its race).
     """
     r = await _client(ctx).post("/command/hunt", json={"target_id": target_id})
     r.raise_for_status()
@@ -859,14 +975,19 @@ async def delete_zone(
 # ── Tools: Animals ────────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def get_animal_training(ctx: Context[ServerSession, AppState]) -> list:
+async def get_animal_training(
+    ctx: Context[ServerSession, AppState],
+    detail: bool = False,
+) -> list:
     """
-    All tamed animals with their training step status (learned/wanted),
-    bond relationships to colonists, position, and health.
+    All tamed animals with the training steps they have learned, the steps set to
+    be trained but not learned yet (pending), and the colonists they are bonded to.
+    Pass detail=True for the full record per animal: position, health, and each
+    step's defName with its learned and wanted flags.
     """
     r = await _client(ctx).get("/animals/training")
     r.raise_for_status()
-    return r.json()
+    return shape_training(r.json(), detail=detail)
 
 
 # ── Tools: World map ──────────────────────────────────────────────────────────
@@ -965,7 +1086,10 @@ async def add_bill(
 ) -> dict:
     """
     Add a production bill to a workbench.
-    bench_id: ThingID of the workbench (from get_production or get_buildings).
+    bench_id: ThingID of the workbench (from get_production, which lists benches that
+    already have bills, or get_buildings with detail=True, which lists powered ones;
+    otherwise find the bench's cell with get_cells_info and read it with
+    get_cell_info, which gives the ThingIDs of what stands there).
     recipe_def: the RecipeDef defName (e.g. MakeSimpleMeal, SmeltWeapon, ButcherCorpse).
     count: number of times to repeat (default 1).
     """
@@ -1008,7 +1132,9 @@ async def equip_item(
     Equip a weapon from the map onto a colonist.
     The colonist's current weapon is moved to their inventory.
     pawn_id: colonist name or ThingID.
-    item_id: ThingID of the weapon on the map (from get_things).
+    item_id: ThingID of the weapon on the map (get_things counts items per kind
+    without ids; find the weapon's cell with get_cells_info and read it with
+    get_cell_info, which gives the ThingIDs of what lies there).
     """
     r = await _client(ctx).post(
         "/command/equip",
@@ -1042,7 +1168,9 @@ async def assign_bed(
     """
     Assign a colonist to a specific bed.
     pawn_id: colonist name or ThingID.
-    bed_id: ThingID of the bed (from get_buildings or get_cell_info).
+    bed_id: ThingID of the bed (from get_room_assignments, which lists beds already
+    assigned; otherwise find the bed's cell with get_cells_info and read it with
+    get_cell_info, which gives the ThingIDs of what stands there).
     """
     r = await _client(ctx).post(
         "/command/assign_bed",
@@ -1249,7 +1377,10 @@ async def queue_medical_operation(
 async def deconstruct(thing_id: str, ctx: Context[ServerSession, AppState]) -> dict:
     """
     Designate a player-built structure for deconstruction.
-    thing_id: ThingID of the building (from get_buildings or get_cell_info).
+    thing_id: ThingID of the building (from get_buildings, which lists damaged
+    buildings, and powered ones with detail=True; otherwise find the building's
+    cell with get_cells_info and read it with get_cell_info, which gives the
+    ThingIDs of what stands there).
     """
     r = await _client(ctx).post("/command/deconstruct", json={"thing_id": thing_id})
     r.raise_for_status()

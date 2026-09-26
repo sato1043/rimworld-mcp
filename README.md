@@ -133,12 +133,21 @@ Three behaviours changed, and none of them is announced at runtime. If you built
 - A `POST` now has to say its body is JSON. Without `Content-Type: application/json` it answers `415` and nothing reaches the game. This is what keeps a page from reaching the commands even in a browser that sends neither header above: a form cannot send that media type, and asking for it from script forces a preflight, which arrives with `Origin` and is refused. The MCP server already sends the header; a hand-written `curl --data` does not, so add `-H "Content-Type: application/json"`.
 - `OPTIONS` no longer answers `204`. It falls through to `405`, like any other unsupported method.
 
+Three tools also return less by default, to save tokens. A prompt or program that read their earlier output should pass `detail=True`, which returns the bridge's answer unchanged:
+
+- `get_animals` lists colony animals one by one without position, and every other animal as a count per race and faction. `race` lists one race's animals with ThingIDs; it takes the race label shown in that output, in the game's display language, and a race that matches nothing fails naming the races on the map.
+- `get_buildings` returns `powered` as one line per kind (`count`, `poweredOn`, `powerOutput`) instead of one entry per building. `summary` and `damaged` are unchanged.
+- `get_animal_training` returns, per animal, the labels of the steps `learned` and `pending` (set to be trained, not learned yet) and `bondedTo`. Position, health and each step's `defName` and flags need `detail=True`.
+
+`get_colony_overview` is new: it returns what eight status tools return, read together.
+
 ## What Claude can do
 
 ### Read game state
 
 | Tool | What it returns |
 |---|---|
+| `get_colony_overview` | State, alerts, threats, colony totals, weather, power, recent letters and each colonist's condition, read in one round trip |
 | `get_game_state` | Tick, speed, season, biome, wealth, pawn/animal/enemy counts |
 | `get_pawns` | All colonists with position, health, job, skills, passions |
 | `get_pawn_status` | Single colonist overview |
@@ -155,15 +164,15 @@ Three behaviours changed, and none of them is announced at runtime. If you built
 | `get_pawn_area` | Allowed-area restriction |
 | `get_pawn_psycasts` | Psyfocus, neural heat, abilities (Royalty DLC) |
 | `get_pawn_genes` | Xenotype and gene list (Biotech DLC) |
-| `get_animals` | All animals — id, race, position, health, faction |
-| `get_animal_training` | Tamed animals — training steps and bonds |
+| `get_animals` | Colony animals one by one, other animals counted per race; `race` lists one race with ids, `detail=True` lists all |
+| `get_animal_training` | Tamed animals — learned and pending training steps, bonds; `detail=True` adds position, health and step flags |
 | `get_enemies` | All hostile pawns |
 | `get_threats` | Danger rating, fires, downed/mental-break colonists |
 | `get_alerts` | Quick health check — food, power, fires, bleeding |
 | `get_weather` | Temperature, wind, season |
 | `get_fertile_cells` | Top-100 fertile map cells |
 | `get_things` | Haulable items grouped by type |
-| `get_buildings` | Powered/damaged buildings, building summary |
+| `get_buildings` | Building summary, damaged buildings, powered buildings per kind; `detail=True` lists powered buildings one by one |
 | `get_designations` | Active Hunt/Mine/CutPlant designations |
 | `get_power` | Generation, consumption, battery level |
 | `get_rooms` | Indoor rooms — role, temp, cleanliness, impressiveness |
@@ -245,6 +254,8 @@ MCP/                        C# mod (symlinked into RimWorld/Mods/)
 
 mcp_server/
   main.py                   FastMCP server — all tools and resources
+  shaping.py                Trims bridge answers into the tools' default output
+  tests/                    pytest suite (no game needed)
   pyproject.toml            uv dependencies
 ```
 
@@ -256,4 +267,10 @@ After editing C# source, rebuild and restart RimWorld — the symlink means no c
 dotnet build MCP\Source\MCP\MCP.csproj
 ```
 
-After editing `main.py`, restart the MCP server process (or re-run `mcp dev main.py`).
+After editing `main.py` or `shaping.py`, restart the MCP server process (or re-run `mcp dev main.py`).
+
+The MCP server's tests run without the game, against a stand-in for the bridge. From the repository root:
+
+```powershell
+uv run --project mcp_server pytest mcp_server
+```
