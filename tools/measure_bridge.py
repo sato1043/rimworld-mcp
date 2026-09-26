@@ -18,6 +18,7 @@ Run it with the MCP server's environment:
     uv run --project mcp_server python tools/measure_bridge.py --help
     uv run --project mcp_server python tools/measure_bridge.py --calibrate
     uv run --project mcp_server python tools/measure_bridge.py --json out.json
+    uv run --project mcp_server python tools/measure_bridge.py --save-bodies before
 
 Exit status: 0 when the run completed, even if some endpoints answered with an error
 (those are listed separately); 1 when the instrument itself cannot be trusted - the
@@ -88,6 +89,7 @@ class Series:
     ms: list[float] = field(default_factory=list)
     body_bytes: int | None = None
     failure: str | None = None     # transport error, non-2xx, or an error body
+    body: bytes | None = field(default=None, repr=False)  # the last timed response
 
     @property
     def median(self) -> float | None:
@@ -101,7 +103,9 @@ class Series:
         return ordered[math.ceil(0.95 * len(ordered)) - 1]  # nearest rank
 
     def summary(self) -> dict:
-        return {**asdict(self), "median_ms": self.median, "p95_ms": self.p95}
+        fields = asdict(self)
+        del fields["body"]  # bytes: saved as files by --save-bodies, not in the JSON
+        return {**fields, "median_ms": self.median, "p95_ms": self.p95}
 
 
 def error_in_body(body: bytes) -> str | None:
@@ -167,6 +171,7 @@ def measure(base_url: str, path: str, samples: int, mode: str,
         series.statuses.append(response.status_code)
         series.ms.append(elapsed)
         series.body_bytes = len(response.content)
+        series.body = response.content
         if response.status_code != expect_status:
             series.failure = f"HTTP {response.status_code}: {response.text[:120]}"
             break
@@ -205,7 +210,26 @@ def _state_snapshot(client: httpx.Client) -> dict | str:
         return f"unavailable: {type(e).__name__}: {e}"
 
 
-def run(base_url: str, samples: int, refused_samples: int) -> tuple[dict, list[str]]:
+def body_file_name(path: str) -> str:
+    """File name for one endpoint's saved body: /animals/training -> animals__training.json.
+    The pawn id is left as the literal {id}, so bodies from two saves line up by name."""
+    return path.strip("/").replace("{id}", "id").replace("/", "__") + ".json"
+
+
+def save_bodies(series: list[Series], directory: Path) -> int:
+    """Write the last keep-alive body of each endpoint, error bodies included, since
+    comparing them across a fix is the point. Returns how many files were written."""
+    directory.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for s in series:
+        if s.mode == "keep-alive" and s.body is not None:
+            (directory / body_file_name(s.path)).write_bytes(s.body)
+            written += 1
+    return written
+
+
+def run(base_url: str, samples: int, refused_samples: int,
+        bodies_dir: Path | None = None) -> tuple[dict, list[str]]:
     problems = route_differences(ROUTER_SOURCE)
     if problems:
         return {}, problems
@@ -266,6 +290,8 @@ def run(base_url: str, samples: int, refused_samples: int) -> tuple[dict, list[s
         "state_after": after,
         "series": [s.summary() for s in series],
     }
+    if bodies_dir is not None:
+        report["bodies_saved"] = save_bodies(series, bodies_dir)
     return report, problems
 
 
@@ -355,6 +381,9 @@ def main() -> int:
     parser.add_argument("--calibrate", action="store_true",
                         help="measure a local stub with a known delay instead of the game")
     parser.add_argument("--json", type=Path, help="write the raw results here")
+    parser.add_argument("--save-bodies", type=Path, metavar="DIR",
+                        help="write each endpoint's last response body into DIR, "
+                             "to compare two runs with a directory diff")
     args = parser.parse_args()
 
     if args.calibrate:
@@ -363,7 +392,8 @@ def main() -> int:
         print("calibration " + ("passed" if passed else "FAILED"))
         return 0 if passed else 1
 
-    report, problems = run(args.url, args.samples, args.refused_samples)
+    report, problems = run(args.url, args.samples, args.refused_samples,
+                           args.save_bodies)
     if problems:
         print("measurement stopped; the instrument cannot be trusted:", file=sys.stderr)
         for p in problems:
@@ -373,6 +403,8 @@ def main() -> int:
         args.json.write_text(json.dumps(report, indent=2, ensure_ascii=False),
                              encoding="utf-8", newline="")
     print(markdown(report))
+    if args.save_bodies:
+        print(f"bodies saved: {report['bodies_saved']} files in {args.save_bodies}")
     return 0
 
 
