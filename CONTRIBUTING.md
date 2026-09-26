@@ -174,3 +174,14 @@ What the tests cover is what can be decided without the game: which requests the
 refuses, and how it counts what it refused. Anything reached through `HttpListener` or
 `Verse` is checked by hand against a running game, and those steps belong in the task
 document for the change that needs them.
+
+The MCP server has tests of its own, also runnable without the game:
+
+```sh
+uv run --project mcp_server pytest mcp_server
+```
+
+They run the real server in memory with a stand-in for the bridge swapped in as the HTTP
+transport, so the tools are called as an MCP client calls them. Their test data has to
+carry the fields the bridge's C# answers with; a field missing from the data is a shape
+the tests never see.
