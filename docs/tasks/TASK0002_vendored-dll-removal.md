@@ -91,7 +91,7 @@ hazard: none
 バイト単位の固定も失われる窓ができる。
 
 ハッシュの照合は削除の前に採る必要がある。TASK0001 の検証中に採取済みで、記録
-（`docs/records/20260925_dev-environment-and-branch-migration.md`）に残っている。
+（`docs/records/20260926_dev-environment-and-branch-migration.md`）に残っている。
 本作業の検証では、削除前にもう一度採り直してから照合する。
 
 ## 実装計画

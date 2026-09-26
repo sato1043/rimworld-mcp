@@ -1,6 +1,6 @@
 # 開発環境の構築と develop メインラインへの移行
 
-- 作業日: 2026-09-25
+- 作業日: 2026-09-25（2026-09-26 に「ターゲットフレームワーク net472 の妥当性」を追記）
 - 対象: 開発機（Windows 11 Pro 10.0.26200 / Git Bash）と `sato1043/rimworld-mcp`（fork）
 - 位置づけ: **fork の所有者による変更の記録**。upstream（`allenmonkey970/rimworld-mcp`）の
   判断・方針ではない
@@ -35,6 +35,13 @@ gh repo clone sato1043/rimworld-mcp
 
 `mcp_server/pyproject.toml` は `requires-python = ">=3.14"` を宣言する。システムの Python は
 3.13.4 なので、`uv run` が uv 管理の 3.14.6 を選ぶ前提で成り立っている（確度 A）。
+
+2026-09-26 の観測（確度 A）: 上の表の .NET SDK は古くなっている。2026-09-25 23:07 に
+SDK 10.0.401 が加わり（`sdk/10.0.401` の作成時刻）、`dotnet --version` は 10.0.401 を
+返す。`global.json` は無く、最新の SDK が選ばれるため、MOD 本体（net472）のビルドも
+SDK 10 が担う。導入は winget で行った（利用者の申告、確度 B）。`winget list` は
+`Microsoft.DotNet.SDK.10` 10.0.401 と `Microsoft.DotNet.SDK.8` 8.0.425 を、ソース
+winget として報告する（確度 A）
 
 ## develop メインラインへの移行（段階 1）
 
@@ -107,6 +114,76 @@ $ git branch -avv
 - **`MCP.dll` は再ビルドでハッシュが変わる。** サイズは同一（254,464 バイト）で、
   TASK0001 は C# ソースに触れていない。差分はビルドごとに変わるメタデータ（MVID・
   タイムスタンプ）と見られる（確度 C。IL を逐次比較してはいない）
+
+## ターゲットフレームワーク net472 の妥当性
+
+調査日 2026-09-26。問いは「`MCP/Source/MCP/MCP.csproj` の
+`<TargetFramework>net472</TargetFramework>` は古い版に見えるが、問題は無いか」である。
+
+### net472 と SDK の関係
+
+- `net472` は TFM（Target Framework Moniker。成果物が動くランタイムの種類と版を表す）で、
+  .NET Framework 4.7.2 を指す。dotnet SDK の版ではない
+- この機械の SDK は 8.0.425 と 10.0.401 の 2 本である（`dotnet --list-sdks`、確度 A）。
+  net472 向けのビルドには NuGet キャッシュの参照アセンブリ
+  `microsoft.netframework.referenceassemblies.net472` 1.0.3 を使う（確度 A）
+- テストプロジェクト `MCP/Tests/MCP.Tests.csproj` は `net10.0` を採る。RimWorld に
+  読み込まれないためで、理由は同ファイルのコメントが持つ
+
+### 読み込む側の観測
+
+Steam 版 RimWorld の導入先で観測した（確度 A）。DLL は
+`RimWorldWin64_Data\Managed\` 配下。
+
+| 項目 | 観測値 | 確認方法 |
+|---|---|---|
+| RimWorld | 1.6.4871 rev590 | `Version.txt` |
+| Unity | 2022.3.35f1 | `RimWorldWin64_Data\globalgamemanagers` 内の版文字列 |
+| Mono | 導入先の直下に `MonoBleedingEdge\` が在る | ディレクトリ一覧 |
+| `mscorlib.dll` | 4.0.0.0 | `AssemblyName.GetAssemblyName` |
+| `netstandard.dll` | 2.1.0.0 | 同上 |
+| `System.Runtime.dll` | 4.1.0.0 | 同上 |
+| `Assembly-CSharp.dll` | 文字列 `mscorlib` を 3 件、`netstandard` を 1 件含む | バイト列の grep |
+
+- `Assembly-CSharp.dll` に `.NETFramework,Version=` の文字列は見つからなかった。参照表の
+  解析はしていないので、ゲーム本体の TFM は特定できていない
+- MOD の DLL はゲームのランタイム（Unity 同梱の Mono と見る。確度 C）へ読み込まれる。
+  TFM を決めるのは読み込む側で、MOD 側は選べない
+- `net10.0` でビルドした DLL は `System.Runtime` 10.0.0.0 を参照する。導入先の
+  `System.Runtime.dll` は 4.1.0.0 で版が足りず、読み込みに失敗すると見る（確度 C。実機では
+  試していない）
+- RimWorld の MOD を net472 でビルドするのは慣例である（確度 C。慣例の出典を本調査では
+  確認していない）
+
+### サポート期限
+
+出典: [Lifecycle FAQ - .NET Framework](https://learn.microsoft.com/en-us/lifecycle/faq/dotnet-framework)
+（ページの `updated_at` は 2025-11-24。2026-09-26 に取得。確度 A）
+
+- 4.5.2 以降は Windows の構成要素として扱われ、インストール先の OS のライフサイクルに
+  従う。4.7.2 に単独の終了日は無い
+- 4.5.2・4.6・4.6.1 は 2022-04-26 に終了した（SHA-1 署名の廃止に伴う）
+- 4.7.2 の対象 OS の一覧に Windows 11 は無い。Windows 11 は 4.8 / 4.8.1 の対象で、FAQ は
+  4.6.2 以降を先行版の in-place 更新（互換を保つ置き換え）と位置づける
+- この MOD が動くのは Microsoft の .NET Framework でなく Mono の上なので、上の期限は直接
+  効かない（確度 C）。効くのは RimWorld と Unity の対応状況である。RimWorld の版上げで
+  TFM が変わったら、`MCP.csproj` の `TargetFramework` と `OutputPath`
+  （`1.6\Assemblies`）を合わせて見直す
+
+### C# 9 と net472 の組み合わせ
+
+- `LangVersion` は 2 つのプロジェクトとも 9 に固定されている
+- 参照アセンブリの `mscorlib.dll` は `IsExternalInit`・`ModuleInitializerAttribute`・
+  `SkipLocalsInitAttribute` を含まない（grep で 0 件）。RimWorld 同梱の `mscorlib.dll` も
+  `IsExternalInit` を含まない。同じ grep で既存の型 `ExtensionAttribute` と
+  `TupleElementNamesAttribute` はそれぞれ 1 件当たり、検査が効くことを確かめた（確度 A）
+- したがって `init` アクセサと `record` は、型を自前で定義しないとコンパイルできないと見る
+  （確度 C。コンパイルは試していない）。現行の `MCP/Source/` はどちらも使っていない
+  （`git grep` で当たるのはコメント中の英単語 record だけ。確度 A）
+- テストを `net10.0` で走らせても、この差はテストで塞がらない。`LangVersion` の固定が
+  揃えるのは構文の版だけで、ランタイムの API の差は MOD のビルドで初めて現れる（確度 C）
+
+この節の調査は新しい判断点を立てない（2026-09-26 検分。本節の全項）。
 
 ## 要裁定の判断点
 
