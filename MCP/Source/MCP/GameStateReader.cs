@@ -810,6 +810,10 @@ namespace MCP
             var pawn = FindColonist(id);
             if (pawn == null) return Error($"Pawn '{id}' not found");
 
+            // The entropy tracker exists without Royalty, but the stats it reads do not:
+            // StatDefOf.PsychicEntropyMax is null then, and MaxEntropy throws.
+            if (!ModsConfig.RoyaltyActive) return Error("Royalty DLC is not active");
+
             var ent = pawn.psychicEntropy;
             if (ent == null) return Error("Pawn is not a psycaster (Royalty DLC may not be active)");
 
@@ -1039,7 +1043,7 @@ namespace MCP
                 .Take(30)
                 .Select(l => (object)new
                 {
-                    label    = l.Label,
+                    label    = l.Label.RawText,
                     type     = l.def?.defName ?? "unknown",
                     typeLabel = l.def?.label ?? "unknown"
                 })
@@ -1194,7 +1198,7 @@ namespace MCP
                 {
                     id      = c.ID,
                     name    = c.Label,
-                    tile    = c.Tile,
+                    tile    = c.Tile.tileId,
                     moving  = c.pather?.Moving ?? false,
                     members = c.PawnsListForReading
                         .Select(p => new { name = p.Name?.ToStringShort ?? p.LabelShort, role = p.RaceProps.Animal ? "animal" : "colonist" })
@@ -1228,7 +1232,9 @@ namespace MCP
                     id      = s.ID,
                     name    = s.Label,
                     faction = s.Faction?.Name ?? "none",
-                    tile    = s.Tile,
+                    // Tile is a PlanetTile struct in 1.6. Serialised whole, its properties
+                    // lead into the surface tile's road links, which refer back to it.
+                    tile    = s.Tile.tileId,
                     hostile = s.Faction?.HostileTo(Faction.OfPlayer) ?? false
                 })
                 .ToList();
@@ -1242,7 +1248,7 @@ namespace MCP
                 .Take(30)
                 .Select(l => (object)new
                 {
-                    label    = l.Label,
+                    label    = l.Label.RawText,
                     type     = l.def?.label ?? "unknown",
                     typeDef  = l.def?.defName ?? "unknown"
                 })
@@ -1496,7 +1502,9 @@ namespace MCP
                     name        = q.name,
                     state       = q.State.ToString(),
                     ongoing     = !q.Historical,
-                    description = q.description
+                    // TaggedString is a struct. Serialised whole it becomes an object, and
+                    // an empty one throws from Length; RawText is the text, or null.
+                    description = q.description.RawText
                 })
                 .ToList();
 
