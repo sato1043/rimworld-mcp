@@ -33,7 +33,7 @@ git push origin upstream/main:refs/heads/main
 ### Sending a change upstream
 
 Cut the branch from `upstream/main`, not from `develop`. `develop` carries fork-local
-files (`CONTRIBUTING.md`, `CLAUDE.md`, `docs/`) that do not belong upstream.
+files (`CONTRIBUTING.md`, `CLAUDE.md`, `docs/`, `tools/`) that do not belong upstream.
 
 ```sh
 git fetch upstream
@@ -101,8 +101,8 @@ Commit Lint format: `<type>(<scope>): <verb> <title>`.
 - Keep the title within 50 characters and wrap the body at 72.
 - State what changed and why, not how.
 - Keep documentation commits separate from code commits, and keep fork-local files (this
-  file, `CLAUDE.md`, `docs/`) in commits of their own, so that they can be left out of
-  pull requests sent upstream.
+  file, `CLAUDE.md`, `docs/`, `tools/`) in commits of their own, so that they can be left
+  out of pull requests sent upstream.
 - Name files explicitly when staging. Do not use `git add -A` or `git add .`.
 
 ## Documents
@@ -113,6 +113,15 @@ Two fork-local trees, neither of which is sent upstream:
   observed, with sources and a stated confidence level.
 - `docs/tasks/<id>_<slug>.md` — one design document per change: the plan, the work log,
   and the decisions behind it.
+
+## Tools
+
+`tools/` holds fork-local scripts for measuring and checking the mod. They are not sent
+upstream. They reuse the MCP server's environment rather than carrying their own:
+
+```sh
+uv run --project mcp_server python tools/<script>.py --help
+```
 
 ## Building and installing
 
