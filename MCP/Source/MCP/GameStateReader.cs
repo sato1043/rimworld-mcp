@@ -757,7 +757,7 @@ namespace MCP
             return "none";
         }
 
-        internal static Pawn FindColonist(string id) =>
+        internal static Pawn? FindColonist(string id) =>
             Find.CurrentMap?.mapPawns.FreeColonistsSpawned.FirstOrDefault(p =>
                 p.ThingID == id ||
                 p.Name.ToStringShort.Equals(id, StringComparison.OrdinalIgnoreCase));

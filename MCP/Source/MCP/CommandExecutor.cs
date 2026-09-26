@@ -71,7 +71,7 @@ namespace MCP
             if (jobDef == null) return Bad($"Unknown JobDef '{jobName}'");
 
             string targetId = cmd["target_id"]?.Value<string>() ?? "";
-            Thing target = null;
+            Thing? target = null;
             if (!string.IsNullOrEmpty(targetId))
                 target = pawn.Map.listerThings.AllThings
                     .FirstOrDefault(t => t.ThingID == targetId);
@@ -186,7 +186,7 @@ namespace MCP
                 _       => Rot4.North
             };
 
-            ThingDef stuff = null;
+            ThingDef? stuff = null;
             if (!string.IsNullOrEmpty(stuffName))
                 stuff = DefDatabase<ThingDef>.GetNamedSilentFail(stuffName);
             if (stuff == null && buildDef.MadeFromStuff)
@@ -370,7 +370,7 @@ namespace MCP
             if (pawn == null) return NotFound("pawn_id");
 
             int areaId = cmd["area_id"]?.Value<int>() ?? -1;
-            Area area = areaId < 0
+            Area? area = areaId < 0
                 ? null
                 : pawn.Map.areaManager.AllAreas.FirstOrDefault(a => a.ID == areaId);
 
@@ -603,7 +603,7 @@ namespace MCP
             if (map == null) return Bad("No active map");
 
             string label = cmd["label"]?.Value<string>() ?? "New Area";
-            Area_Allowed area = null;
+            Area_Allowed? area = null;
             map.areaManager.TryMakeNewAllowed(out area);
             if (area == null) return Bad("Could not create area");
             area.SetLabel(label);
@@ -693,7 +693,7 @@ namespace MCP
             catch { return new JObject(); }
         }
 
-        private static Pawn Colonist(JObject cmd, string field)
+        private static Pawn? Colonist(JObject cmd, string field)
         {
             var id = cmd[field]?.Value<string>() ?? "";
             return GameStateReader.FindColonist(id);

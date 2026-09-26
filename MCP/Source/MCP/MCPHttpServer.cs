@@ -146,13 +146,13 @@ namespace MCP
                 body = reader.ReadToEnd();
             }
 
-            var pending = new PendingRequest
-            {
-                Method      = ctx.Request.HttpMethod,
-                Path        = ctx.Request.Url.AbsolutePath,
-                QueryString = ctx.Request.Url.Query,
-                Body        = body
-            };
+            // Named rather than positional: all four are strings, so a reordering here
+            // would still compile.
+            var pending = new PendingRequest(
+                method:      ctx.Request.HttpMethod,
+                path:        ctx.Request.Url.AbsolutePath,
+                queryString: ctx.Request.Url.Query,
+                body:        body);
 
             Queue.Enqueue(pending);
 
