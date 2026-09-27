@@ -448,6 +448,8 @@ uv run --project mcp_server python .claude/skills/rimworld-play/scripts/check_sk
 - **完了の後に足された 2 つの目標**（2026-09-27・ユーザー）: 取り込む。`frozen` を外して
   説明文とスキルを直し、到達基準を満たしてから再び立てた。非目標から
   `place_blueprint` の説明の変更を外した
+- **未裁定の残課題の扱い**（2026-09-27・ユーザー）: 起票する。5 つの tool の 2 回目の
+  振る舞いは TASK0027、スキルと説明文の重なりは TASK0028 が持つ
 
 ## stakeholder 未裁定の残課題
 
@@ -459,14 +461,14 @@ uv run --project mcp_server python .claude/skills/rimworld-play/scripts/check_sk
   2 回目がゲームに拒まれるなら、`idempotentHint` は true にあたる。今は確かめておらず、
   false（安全側）で宣言している。確かめるなら、ゲーム本体の
   `GenConstruct.CanPlaceBlueprintAt` と `Pawn_EquipmentTracker.AddEquipment` を読むか、
-  実機で同じ呼び出しを 2 回送る
+  実機で同じ呼び出しを 2 回送る（残課題 TASK0027）
 - **`draft_pawn`・`set_pause`・`assign_bed` の 2 回目の振る舞い（2026-09-27）。** Mod 側に
   2 回目を止める分岐は無い。true の宣言が成り立つのは、次の 3 つがそれぞれ同値のとき何も
-  しない場合に限る。確かめ方は上と同じ
+  しない場合に限る。確かめ方は上と同じ（残課題 TASK0027）
     - `Pawn_DraftController.Drafted` の setter
     - `TickManager.Pause()`
     - `CompAssignableToPawn.TryAssignPawn`
 - **スキルの `tools.md` と `place_blueprint` の説明文の重なり（2026-09-27）。** スキルは
   「説明文に無い使い方だけを書く」と定める。直した説明文は、床とゾーンを置けないことと、
   向き・素材の既定への倒れ方を書くので、「命令の癖」の 2 項と重なる。削るなら、前者を
-  出典に挙げる TASK0022 の非目標の書き方も合わせて改める
+  出典に挙げる TASK0022 の非目標の書き方も合わせて改める（残課題 TASK0028）
