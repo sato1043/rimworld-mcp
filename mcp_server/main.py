@@ -10,6 +10,9 @@ or install into Claude Desktop:
 """
 
 import asyncio
+import functools
+import inspect
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -116,7 +119,59 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppState]:
         yield AppState(http=client)
 
 
-mcp = FastMCP("RimWorldMCP", lifespan=lifespan, json_response=True)
+# ── Server: every tool replies in compact JSON ────────────────────────────────
+
+class RimWorldMCP(FastMCP):
+    """FastMCP whose tools reply with their result as one block of JSON text without
+    indentation.
+
+    FastMCP writes a dict as JSON indented by two spaces, close to 30% of the
+    characters of a dict reply on the game's data, and a list as one block per item,
+    which leaves an empty list with no reply at all and a one-item list looking like a
+    dict.
+
+    Every @tool() registers through add_tool(), so overriding it here covers the
+    tools below and any added later, with nothing to remember at each of them. Tools
+    handed to the constructor (tools=[...]) or to the tool manager directly do not
+    pass through it; a test checks that every registered tool does.
+
+    A tool function keeps its annotation (-> dict, -> list), which says what it
+    returns; the client receives that value as JSON text. The two differ on purpose,
+    which is why the wrapping and the refusal of structured output live together here.
+    """
+
+    @staticmethod
+    def _replying_in_compact_json(fn):
+        """Wrap a tool function so that it replies with its result as compact JSON text.
+
+        The result must be what JSON can hold: dicts, lists, strings, numbers, booleans
+        and None. Anything else - a pydantic model, an Image, a content block - fails
+        the call with its type named, rather than being written out as its str() or
+        handled as FastMCP would. A string is sent as a JSON string, like every other
+        value. NaN and Infinity are written as such, as FastMCP wrote them.
+        """
+        @functools.wraps(fn)
+        async def reply(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            # Not ASCII-escaped: the game's labels may be Japanese, and \uXXXX spends
+            # six characters on each.
+            return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        return reply
+
+    def add_tool(self, fn, *args, structured_output: bool | None = None, **kwargs) -> None:
+        # The wrapped tool returns text, which an output schema would not match, and
+        # that text is the whole reply, so nothing is sent again as structured
+        # content. Asking for it is refused rather than dropped without a word.
+        if structured_output:
+            raise ValueError(f"{getattr(fn, '__name__', fn)}: RimWorldMCP tools reply "
+                             "in JSON text only; structured_output=True cannot apply")
+        super().add_tool(self._replying_in_compact_json(fn), *args,
+                         structured_output=False, **kwargs)
+
+
+mcp = RimWorldMCP("RimWorldMCP", lifespan=lifespan, json_response=True)
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -344,9 +399,7 @@ async def get_pawn_inventory(
 
 # ── Tools: Creatures on map ───────────────────────────────────────────────────
 
-# The return type is a union, for which FastMCP would also send the result a second
-# time as structured content. The other tools send text only; so does this one.
-@mcp.tool(structured_output=False)
+@mcp.tool()
 async def get_animals(
     ctx: Context[ServerSession, AppState],
     race: str = "",

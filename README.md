@@ -141,6 +141,8 @@ Three tools also return less by default, to save tokens. A prompt or program tha
 
 `get_colony_overview` is new: it returns what eight status tools return, read together.
 
+Every tool now replies with one block of JSON text without indentation, which takes the model fewer tokens to read. A tool that returns a list used to send one content block per item, and no block at all for an empty list; it now sends the whole list as one JSON array, `[]` when empty. Nothing is sent as structured content, as before. A program that read the blocks one by one should parse the single block as JSON instead. To read a reply yourself, pass it through a JSON formatter such as `jq .`.
+
 ## What Claude can do
 
 ### Read game state

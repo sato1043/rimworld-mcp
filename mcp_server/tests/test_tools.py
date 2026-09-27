@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 
 import main
@@ -90,9 +91,9 @@ def use_bridge(monkeypatch):
     return install
 
 
-def call_result(tool: str, arguments: dict | None = None):
+def call_result(tool: str, arguments: dict | None = None, server=None):
     async def run():
-        async with create_connected_server_and_client_session(main.mcp) as session:
+        async with create_connected_server_and_client_session(server or main.mcp) as session:
             return await session.call_tool(tool, arguments or {})
     return asyncio.run(run())
 
@@ -100,16 +101,15 @@ def call_result(tool: str, arguments: dict | None = None):
 def call(tool: str, arguments: dict | None = None):
     result = call_result(tool, arguments)
     assert not result.isError, result.content
-    # The tools send text only: FastMCP writes a dict as one JSON block, and a list
-    # as one block per item. (A one-item list is read back as its item.)
+    # The tools send text only, as one block of JSON.
     assert result.structuredContent is None, tool
-    items = [json.loads(block.text) for block in result.content]
-    return items[0] if len(items) == 1 else items
+    assert len(result.content) == 1, tool
+    return json.loads(result.content[0].text)
 
 
-def list_tools():
+def list_tools(server=None):
     async def run():
-        async with create_connected_server_and_client_session(main.mcp) as session:
+        async with create_connected_server_and_client_session(server or main.mcp) as session:
             return (await session.list_tools()).tools
     return {t.name: t for t in asyncio.run(run())}
 
@@ -206,6 +206,127 @@ def test_overview_lets_failures_other_than_a_read_propagate():
         asyncio.run(run())
 
 
+# ── Output form ───────────────────────────────────────────────────────────────
+
+def compact(text: str) -> str:
+    """The text written again as JSON without indentation or escaped non-ASCII."""
+    return json.dumps(json.loads(text), ensure_ascii=False, separators=(",", ":"))
+
+
+def test_a_dict_answers_as_one_block_of_compact_json(use_bridge):
+    weather = {"weather": "晴れ", "temperature": 21.5, "season": {"label": "夏"}}
+    transport, _ = bridge(answers={"/weather": httpx.Response(200, json=weather)})
+    use_bridge(transport)
+    result = call_result("get_weather")
+    assert len(result.content) == 1
+    text = result.content[0].text
+    assert text == compact(text)
+    assert json.loads(text) == weather
+
+
+def test_a_list_answers_as_one_json_array(use_bridge):
+    transport, _ = bridge()
+    use_bridge(transport)
+    result = call_result("get_pawns")
+    assert len(result.content) == 1
+    text = result.content[0].text
+    assert text == compact(text)
+    assert json.loads(text) == [PAWN]
+
+
+def test_an_empty_list_answers_as_an_empty_array(use_bridge):
+    transport, _ = bridge()
+    use_bridge(transport)
+    assert [block.text for block in call_result("get_messages").content] == ["[]"]
+
+
+def test_no_tool_lists_an_output_schema():
+    # Without one FastMCP sends no structured content; call() checks what is sent.
+    tools = list_tools()
+    # get_animals returns a union, for which FastMCP would make a schema by default.
+    assert "get_animals" in tools
+    assert [name for name, t in tools.items() if t.outputSchema is not None] == []
+
+
+def test_every_registered_tool_replies_through_the_wrapper():
+    # Tools handed to the constructor or the tool manager would skip add_tool().
+    wrapper = main.RimWorldMCP._replying_in_compact_json(lambda: None).__code__
+    tools = main.mcp._tool_manager.list_tools()
+    assert len(tools) == len(list_tools())
+    assert [t.name for t in tools if t.fn.__code__ is not wrapper] == []
+
+
+def test_wrapping_leaves_what_each_tool_lists_but_its_output_schema():
+    plain = FastMCP("plain")
+    for tool in main.mcp._tool_manager.list_tools():
+        plain.add_tool(tool.fn.__wrapped__, name=tool.name, structured_output=False)
+    wrapped, unwrapped = list_tools(), list_tools(plain)
+    assert wrapped.keys() == unwrapped.keys()
+    for name, tool in wrapped.items():
+        assert tool.description == unwrapped[name].description, name
+        assert tool.inputSchema == unwrapped[name].inputSchema, name
+
+
+def test_a_tool_added_later_answers_the_same_way():
+    server = main.RimWorldMCP("later")
+
+    @server.tool()
+    async def mapping() -> dict | list:
+        return {"a": [1, "ラベル"]}
+
+    @server.tool()
+    def items() -> list:
+        return [{"a": 1}, "x"]
+
+    @server.tool()
+    async def label() -> str:
+        return "晴れ"
+
+    assert list_tools(server)["mapping"].outputSchema is None
+    for name, text in (("mapping", '{"a":[1,"ラベル"]}'), ("items", '[{"a":1},"x"]'),
+                       ("label", '"晴れ"')):
+        result = call_result(name, server=server)
+        assert result.structuredContent is None, name
+        assert [block.text for block in result.content] == [text]
+
+
+def test_a_value_json_cannot_hold_fails_the_call_naming_its_type():
+    server = main.RimWorldMCP("later")
+
+    @server.tool()
+    async def seasons() -> dict:
+        return {"labels": {"夏"}}
+
+    result = call_result("seasons", server=server)
+    assert result.isError
+    assert "seasons" in result.content[0].text
+    assert "type set" in result.content[0].text
+
+
+def test_nan_is_written_as_fastmcp_wrote_it():
+    server = main.RimWorldMCP("later")
+
+    @server.tool()
+    async def reading() -> dict:
+        return {"value": float("nan")}
+
+    result = call_result("reading", server=server)
+    assert [block.text for block in result.content] == ['{"value":NaN}']
+
+
+def test_asking_for_structured_output_is_refused():
+    server = main.RimWorldMCP("later")
+
+    async def mapping() -> dict:
+        return {}
+
+    with pytest.raises(ValueError, match="structured_output"):
+        server.add_tool(mapping, structured_output=True)
+    # Everything else reaches FastMCP as given, by position or by name.
+    server.add_tool(mapping, "renamed", structured_output=False)
+    assert list(list_tools(server)) == ["renamed"]
+
+
 # ── Tool surface ──────────────────────────────────────────────────────────────
 
 def test_get_animals_defaults_to_counts_and_takes_race_and_detail(use_bridge):
@@ -216,8 +337,6 @@ def test_get_animals_defaults_to_counts_and_takes_race_and_detail(use_bridge):
     assert call("get_animals", {"race": ""}) == counts
     assert [a["id"] for a in call("get_animals", {"race": "Deer"})] == ["Deer1", "Deer2"]
     assert call("get_animals", {"detail": True}) == BRIDGE["/animals"]
-    # One block per animal, as the bridge's list would give.
-    assert len(call_result("get_animals", {"detail": True}).content) == len(DEER)
     assert call("get_animals", {"race": "Deer", "detail": True}) == DEER
 
 
@@ -232,8 +351,8 @@ def test_get_animals_fails_on_a_race_that_matches_nothing(use_bridge):
 def test_get_animal_training_lists_pending_and_takes_detail(use_bridge):
     transport, _ = bridge()
     use_bridge(transport)
-    assert call("get_animal_training")["pending"] == ["guard"]
-    assert call("get_animal_training", {"detail": True}) == TRAINING[0]
+    assert call("get_animal_training")[0]["pending"] == ["guard"]
+    assert call("get_animal_training", {"detail": True}) == TRAINING
 
 
 def test_new_arguments_are_optional_in_the_schemas():
