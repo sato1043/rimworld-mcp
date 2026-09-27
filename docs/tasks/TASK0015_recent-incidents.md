@@ -6,6 +6,11 @@ requirements: []
 relates-to:
  - TASK0007_serialization-failures
  - TASK0008_event-log
+user-reach: high
+dev-reach: low
+drive: high
+irreversible: low
+hazard: none
 ---
 
 # `/incidents` が説明どおり最近の letter を返すようにする
@@ -49,8 +54,12 @@ relates-to:
 - **起票**（2026-09-27・ユーザー）: TASK0008 の残課題 2 件（最も古い 30 件・書式タグ）を、
   1 本の作業書で直す。直す箇所と実機での確かめ方（同じセーブで前後の応答を比べる）が
   同じだからである。upstream へ送れるかはブランチで分ける
+- **優先度**（2026-09-27・ユーザー）: `user-reach: high`（LLM が説明と逆の古い出来事を
+  読む）・`dev-reach: low`・`irreversible: low`・`hazard: none` はエージェントの候補を
+  承認した。`drive` は high と判定した
 
 ## stakeholder 未裁定の残課題
 
 - 返す 30 件の並び順（古い順のまま・新しい順）
 - 優先度の 4 軸と `drive`
+- 決着（2026-09-27）: 上の優先度は、ユーザーが候補を承認し `drive` を判定した（裁定記録）
