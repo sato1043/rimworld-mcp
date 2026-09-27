@@ -28,8 +28,17 @@ MCP/**/bin/
 *.iml
 
 # --- Local tool state ---
-.claude/
-**/.claude/
+# The root .claude/ is local state, except the skills this fork tracks, which are
+# listed one by one so that a personal skill or a stray file stays untracked.
+# /*/**/.claude/ ignores .claude/ below the root only: **/.claude/ would also match
+# the root one and cancel the exceptions. Upstream ignores .claude/ and **/.claude/
+# here; this fork replaced those lines, so pulling an upstream change to them will
+# conflict.
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/rimworld-play/
+/*/**/.claude/
 .serena/
 
 # --- OS ---

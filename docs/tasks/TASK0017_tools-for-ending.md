@@ -21,6 +21,9 @@ DLC なしのエンディング（宇宙船の打ち上げ・ジャーニーオ�
 - ゲームをセーブする tool を足す
 - キャラバンを編成し、目的地へ出発させる tool を足す
 - upstream へ送れる変更と、この fork の変更に依存する変更を、別のブランチに分ける
+- スキル `rimworld-play` の `references/tools.md`「tool に無い操作」と
+  `references/advanced.md` から、足した操作を「tool に無い」とする記述を消す
+  （fork ローカルの変更として分ける）
 
 ## 非目標
 

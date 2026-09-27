@@ -8,6 +8,11 @@ maintainer. Do not include changes to this file in pull requests sent upstream.
 This file is the source of truth for how work is carried out in this fork. Anything not
 stated here follows the repository's existing conventions and `README.md`.
 
+**Fork-local files** are this file, `CLAUDE.md`, `docs/`, `tools/` and `.claude/skills/`.
+None of them is sent upstream. The fork's lines in `.gitignore` (the `.claude/` rules) are
+fork-local as well, although the file itself is shared with upstream. The rules below
+refer to this list.
+
 ## Branch layout
 
 - **`develop` is this fork's mainline**, and the default branch on `origin`.
@@ -32,8 +37,8 @@ git push origin upstream/main:refs/heads/main
 
 ### Sending a change upstream
 
-Cut the branch from `upstream/main`, not from `develop`. `develop` carries fork-local
-files (`CONTRIBUTING.md`, `CLAUDE.md`, `docs/`, `tools/`) that do not belong upstream.
+Cut the branch from `upstream/main`, not from `develop`. `develop` carries the fork-local
+files, which do not belong upstream.
 
 ```sh
 git fetch upstream
@@ -108,9 +113,8 @@ Commit Lint format: `<type>(<scope>): <verb> <title>`.
   (`fix: use GitHub CDN URL ...`) stays valid.
 - Keep the title within 50 characters and wrap the body at 72.
 - State what changed and why, not how.
-- Keep documentation commits separate from code commits, and keep fork-local files (this
-  file, `CLAUDE.md`, `docs/`, `tools/`) in commits of their own, so that they can be left
-  out of pull requests sent upstream.
+- Keep documentation commits separate from code commits, and keep fork-local files in
+  commits of their own, so that they can be left out of pull requests sent upstream.
 - Name files explicitly when staging. Do not use `git add -A` or `git add .`.
 
 ## Documents
@@ -130,6 +134,21 @@ upstream. They reuse the MCP server's environment rather than carrying their own
 ```sh
 uv run --project mcp_server python tools/<script>.py --help
 ```
+
+## Skills
+
+`.claude/skills/` holds fork-local Claude Code skills, and is the only part of `.claude/`
+that is tracked. Only the skills listed in `.gitignore` are tracked; everything else under
+`.claude/` stays local state.
+
+- Play sessions (`rimworld-play`) run from the main checkout and keep per-save colony
+  notes under its `.claude/play/`. A worktree's `.claude/` is removed with the worktree,
+  and a session isolated in a worktree cannot write to the main checkout.
+- Strategy notes approved during play are collected in the colony notes, then applied
+  to the skill on a topic branch like any other change.
+- A skill's checker lives in the skill's `scripts/`, not in `tools/`, so that it moves
+  with the skill. Run it after editing the skill:
+  `uv run --project mcp_server python .claude/skills/rimworld-play/scripts/check_skill.py`
 
 ## Building and installing
 
