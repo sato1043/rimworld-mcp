@@ -4,6 +4,7 @@ Each test runs the real server in memory and swaps only the HTTP transport, so t
 tool arguments, the output schema and the client's error handling are all exercised.
 """
 
+import ast
 import asyncio
 import inspect
 import json
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from mcp import ClientSession
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import ToolAnnotations
@@ -592,6 +594,71 @@ def test_a_tool_sends_what_it_declares(name, use_bridge):
         assert [s for s in sent if s[0] != "GET"] == []
     else:
         assert [s for s in sent if s[0] != "POST" or not s[1].startswith("/command/")] == []
+
+
+# ── Play skill notice ─────────────────────────────────────────────────────────
+
+# Written out rather than read from main, so that moving the notice to another tool,
+# or dropping it from one, fails here.
+NOTICED = {"get_game_state", "ping", "get_colony_overview"}
+
+
+def docstring_as_written(name: str) -> str:
+    """The tool's docstring as Python compiles it from main.py, with no decorator
+    applied: what its description was before the notice was added."""
+    tree = ast.parse(Path(main.__file__).read_text(encoding="utf-8"))
+    node = next(n for n in tree.body
+                if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == name)
+    # Only the docstring is kept, so that nothing else in the definition is evaluated.
+    node.decorator_list, node.body, node.returns = [], node.body[:1], None
+    node.args = ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[],
+                              defaults=[])
+    namespace = {}
+    exec(compile(ast.Module([node], []), main.__file__, "exec"), namespace)
+    return namespace[name].__doc__
+
+
+def test_the_client_receives_the_notice_as_the_instructions(monkeypatch):
+    received = []
+    initialize = ClientSession.initialize
+
+    async def recording(self):
+        received.append(result := await initialize(self))
+        return result
+
+    monkeypatch.setattr(ClientSession, "initialize", recording)
+    list_tools()
+    assert [result.instructions for result in received] == [main.PLAY_SKILL_NOTICE]
+
+
+def test_only_the_entry_tools_carry_the_notice():
+    tools = list_tools()
+    assert NOTICED <= tools.keys()
+    assert {name for name, t in tools.items() if main.PLAY_SKILL_NOTICE in t.description} \
+        == NOTICED
+
+
+def test_the_other_tools_list_their_docstrings_as_written():
+    others = {name: t for name, t in list_tools().items() if name not in NOTICED}
+    assert [name for name, t in others.items()
+            if t.description != docstring_as_written(name)] == []
+
+
+@pytest.mark.parametrize("name", sorted(NOTICED))
+def test_the_notice_follows_the_tools_own_description(name):
+    description = list_tools()[name].description
+    written = docstring_as_written(name)
+    assert description.startswith(written)
+    assert description.endswith("\n\n" + main.PLAY_SKILL_NOTICE)
+    assert description.removeprefix(written).strip("\n") == main.PLAY_SKILL_NOTICE
+
+
+def test_the_notice_names_the_skill_and_where_it_is_kept_and_no_url():
+    notice = main.PLAY_SKILL_NOTICE
+    assert "rimworld-play" in notice
+    assert ".claude/skills/rimworld-play" in notice
+    assert "if this session has it" in notice
+    assert "://" not in notice
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

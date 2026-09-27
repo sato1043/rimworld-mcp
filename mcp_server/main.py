@@ -200,7 +200,31 @@ class RimWorldMCP(FastMCP):
         super().add_tool(*given.args[1:], **given.kwargs)
 
 
-mcp = RimWorldMCP("RimWorldMCP", lifespan=lifespan, json_response=True)
+# ── The play skill: where the fuller knowledge of playing is kept ─────────────
+# The tools say what each one does; how to run a colony with them, and what to aim
+# for, is in the Claude Code skill rimworld-play that this fork keeps. The notice
+# goes in the server's instructions and at the end of the entry tools' descriptions:
+# some clients drop the instructions, and a client that loads descriptions on demand
+# shows them only once the model has picked a tool. It names the skill's path in the
+# repository rather than a URL, so that no description sends anyone off-site.
+PLAY_SKILL_NOTICE = (
+    "Companion skill: the Claude Code skill rimworld-play holds the play cycle, "
+    "per-colony notes and strategy for RimWorld 1.6 without DLC. Use it when playing "
+    "a colony, if this session has it. It is kept in .claude/skills/rimworld-play of "
+    "the repository this server comes from.")
+
+
+def mentions_play_skill(fn):
+    """Append PLAY_SKILL_NOTICE to a tool's docstring, after a blank line, so that the
+    tool's own description comes first. Put it below @mcp.tool, which reads the
+    docstring when it registers the tool."""
+    doc = fn.__doc__
+    fn.__doc__ = doc + ("\n" if doc.endswith("\n") else "\n\n") + PLAY_SKILL_NOTICE
+    return fn
+
+
+mcp = RimWorldMCP("RimWorldMCP", instructions=PLAY_SKILL_NOTICE, lifespan=lifespan,
+                  json_response=True)
 
 
 # ── Tool annotations: what each tool does to the game ─────────────────────────
@@ -271,6 +295,7 @@ async def resource_pawns() -> str:
 # ── Tools: World / map overview ───────────────────────────────────────────────
 
 @mcp.tool(annotations=READS_GAME)
+@mentions_play_skill
 async def get_game_state(ctx: Context[ServerSession, AppState]) -> dict:
     """
     High-level summary of the current RimWorld session:
@@ -361,6 +386,7 @@ async def collect_overview(client: httpx.AsyncClient) -> dict:
 
 
 @mcp.tool(annotations=READS_GAME)
+@mentions_play_skill
 async def get_colony_overview(ctx: Context[ServerSession, AppState]) -> dict:
     """
     One-call situation report. Its sections hold what these tools return:
@@ -811,6 +837,7 @@ async def forbid_thing(
 # ── Tools: Ping / game control ───────────────────────────────────────────────
 
 @mcp.tool(annotations=READS_GAME)
+@mentions_play_skill
 async def ping(ctx: Context[ServerSession, AppState]) -> dict:
     """Connectivity test. Returns status=pong if the bridge is reachable."""
     r = await _client(ctx).get("/ping")
