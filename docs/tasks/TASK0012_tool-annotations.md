@@ -7,6 +7,7 @@ relates-to:
  - TASK0006_overview-and-lean-reads
 user-reach: high
 dev-reach: high
+drive: high
 irreversible: low
 hazard: none
 ---
@@ -47,6 +48,7 @@ annotations が無く、クライアントは読み出しと書き込みを区�
   分類が要り、TASK0006 の到達基準（3 つ以外の tool を変えない）の外にあたる
 - **優先度**（2026-09-26・ユーザー）: `user-reach`・`dev-reach`・`irreversible`・
   `hazard` はエージェントの候補を承認した。`drive` は未判定
+- **`drive`**（2026-09-26・ユーザー）: high と判定した
 
 ## stakeholder 未裁定の残課題
 

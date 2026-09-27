@@ -7,6 +7,7 @@ relates-to:
  - TASK0006_overview-and-lean-reads
 user-reach: high
 dev-reach: low
+drive: high
 irreversible: low
 hazard: none
 ---
@@ -47,6 +48,7 @@ TASK0006 は野生動物を種ごとの頭数にまとめたが、飼育動物�
   指摘）。名前の付いたペットの扱いの設計が要るため、TASK0006 の内側で扱わない
 - **優先度**（2026-09-26・ユーザー）: `user-reach`・`dev-reach`・`irreversible`・
   `hazard` はエージェントの候補を承認した。`drive` は未判定
+- **`drive`**（2026-09-26・ユーザー）: high と判定した
 
 ## stakeholder 未裁定の残課題
 
