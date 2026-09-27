@@ -53,6 +53,7 @@ namespace MCP
             "/room_assignments"  => Ok(GameStateReader.GetRoomAssignments()),
             "/mechs"             => Ok(GameStateReader.GetMechs()),
             "/incidents"         => Ok(GameStateReader.GetIncidents()),
+            "/events"            => HandleEvents(query),
             _ when path.StartsWith("/cell/")  => HandleCellPath(path),
             _ when path.StartsWith("/cells/") => HandleCellsRectPath(path),
             _ when path.StartsWith("/pawn/")  => HandlePawnPath(path),
@@ -145,6 +146,13 @@ namespace MCP
             "/command/delete_zone"   => CommandExecutor.DeleteZone(body),
             _ => (404, "{\"error\":\"Not found\"}")
         };
+
+        private static (int, string) HandleEvents(string query)
+        {
+            if (!EventQuery.TryRead(query, out var since, out var limit, out var refusal))
+                return (400, JsonConvert.SerializeObject(new { error = refusal }));
+            return Ok(ArchiveEvents.Read(since, limit));
+        }
 
         private static (int, string) Ok(object data) =>
             (200, JsonConvert.SerializeObject(data));

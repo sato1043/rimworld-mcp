@@ -28,6 +28,8 @@
     -->
     <Compile Include="..\Source\MCP\RequestGuard.cs" />
     <Compile Include="..\Source\MCP\NoticeLog.cs" />
+    <!-- The events rules: the folder holds only files that reference nothing from the game. -->
+    <Compile Include="..\Source\MCP\Events\*.cs" />
   </ItemGroup>
 
   <ItemGroup>

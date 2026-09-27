@@ -198,6 +198,7 @@ Every tool now replies with one block of JSON text without indentation, which ta
 | `get_apparel` | Apparel policies and colonist assignments |
 | `get_corpses` | Corpses — rot progress, position |
 | `get_incidents` / `get_messages` | Recent game letters |
+| `get_events` | Letters and messages in the order they arrived, after a position the caller keeps: pass the returned `next` as `since` to get what came after it |
 | `get_caravans` | Player caravans on world map |
 | `get_world_factions` | All factions with goodwill |
 | `get_world_sites` | Faction settlements and world sites |
@@ -250,7 +251,10 @@ MCP/                        C# mod (symlinked into RimWorld/Mods/)
     PendingRequest.cs       Cross-thread DTO (ManualResetEventSlim)
     MCPGameComponent.cs     Main-thread consumer — drains queue each frame
     RequestRouter.cs        Routes paths to reader or executor
-    GameStateReader.cs      All read-only queries
+    GameStateReader.cs      Read-only queries
+    ArchiveEvents.cs        GET /events — archive entries in the order they entered
+    Archive*Patch*.cs       Harmony patches that follow entries into and out of the archive
+    Events/                 Cursor, ledger and selection rules (no game references)
     CommandExecutor.cs      All mutating commands
   1.6/Assemblies/MCP.dll    Built output
 

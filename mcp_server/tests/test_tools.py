@@ -370,6 +370,57 @@ def test_overview_is_marked_read_only():
     assert list_tools()["get_colony_overview"].annotations.readOnlyHint is True
 
 
+# ── Events ────────────────────────────────────────────────────────────────────
+
+EVENTS = {"events": [{"tick": 5, "kind": "letter", "type": "ThreatBig", "label": "Raid"}],
+          "next": "e724be81.203", "more": True, "gap": False, "reloaded": False}
+
+
+def events_bridge(answer: httpx.Response | None = None):
+    """A transport answering /events, and the path and query of each request."""
+    asked = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        asked.append((request.url.path, dict(request.url.params)))
+        return answer or httpx.Response(200, json=EVENTS)
+
+    return httpx.MockTransport(handle), asked
+
+
+def test_get_events_passes_since_and_limit_and_returns_the_answer(use_bridge):
+    transport, asked = events_bridge()
+    use_bridge(transport)
+    assert call("get_events", {"since": "e724be81.202", "limit": 5}) == EVENTS
+    assert asked == [("/events", {"since": "e724be81.202", "limit": "5"})]
+
+
+def test_get_events_leaves_since_out_when_not_given(use_bridge):
+    # The bridge refuses an empty since, so an omitted one must not be sent at all.
+    transport, asked = events_bridge()
+    use_bridge(transport)
+    call("get_events")
+    call("get_events", {"since": ""})
+    assert asked == [("/events", {"limit": "30"})] * 2
+
+
+def test_get_events_fails_with_the_bridges_reason(use_bridge):
+    reason = "since is not a cursor returned by this endpoint; leave since out to read the latest"
+    transport, _ = events_bridge(httpx.Response(400, json={"error": reason}))
+    use_bridge(transport)
+    result = call_result("get_events", {"since": "nope"})
+    assert result.isError
+    assert reason in result.content[0].text
+
+
+def test_get_events_takes_optional_text_and_is_marked_read_only():
+    tool = list_tools()["get_events"]
+    schema = tool.inputSchema
+    assert {"since", "limit"} <= set(schema["properties"])
+    assert not {"since", "limit"} & set(schema.get("required", []))
+    assert schema["properties"]["since"]["type"] == "string"
+    assert tool.annotations.readOnlyHint is True
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("token", ["secret-value ", "secret\tvalue", "sécret-value"])
