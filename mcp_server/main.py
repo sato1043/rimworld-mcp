@@ -5,8 +5,8 @@ Bridges an LLM to a running RimWorld game via the MCP mod's HTTP bridge.
 
 Start the game first (mod auto-starts the bridge on port 8080), then run:
     uv run mcp dev main.py
-or install into Claude Desktop:
-    uv run mcp install main.py --name "RimWorld"
+or register it with Claude Code, from the repository root:
+    claude mcp add rimworld --scope user -- uv run --directory "$PWD/mcp_server" mcp run main.py
 """
 
 import asyncio

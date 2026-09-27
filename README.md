@@ -29,7 +29,7 @@ The bridge listens on loopback only, and it refuses any request that carries a b
 - RimWorld 1.6 (GOG or Steam)
 - [.NET SDK](https://dotnet.microsoft.com/) (for building the mod)
 - Python 3.14+ and [uv](https://docs.astral.sh/uv/)
-- Claude Desktop or another MCP client
+- Claude Code or another MCP client
 
 ## Setup
 
@@ -70,16 +70,31 @@ waits 15 seconds and fails with `503 Game thread timeout`.
 
 ### 3. Connect the MCP server
 
+**Register with Claude Code.** Run from the repository root:
+
+```powershell
+claude mcp add rimworld --scope user -- uv run --directory "$PWD\mcp_server" mcp run main.py
+```
+
+`--scope user` makes the server available from any directory; without it, the
+registration applies to the current directory only. `mcp run` serves `main.py` over
+stdio, which is what Claude Code expects — `python main.py` would start an HTTP server
+instead.
+
+Check that Claude Code can start it with `claude mcp list`: `rimworld` should show
+`✔ Connected`. That only means the server started; it reaches the game when a tool is
+called.
+
+To unregister:
+
+```powershell
+claude mcp remove rimworld --scope user
+```
+
 **Dev / inspect mode:**
 ```powershell
 cd mcp_server
 uv run mcp dev main.py
-```
-
-**Install into Claude Desktop:**
-```powershell
-cd mcp_server
-uv run mcp install main.py --name "RimWorld"
 ```
 
 Verify the bridge is reachable: `curl http://127.0.0.1:8080/ping` should return `{"status":"pong"}`.
@@ -96,7 +111,7 @@ uv run --project mcp_server python -c "import secrets; print(secrets.token_urlsa
 
 **What a secret does and does not protect.** It travels in an environment variable, which any program running as you can read — the same programs it is meant to keep out. It stops one that merely found the port open; it does not stop one that goes looking for the value. Changing it means restarting both the game and the MCP server, since each reads it once at startup. The `Origin`, `Sec-Fetch-Site` and content type checks are separate: they hold whether or not a secret is set, and setting one neither strengthens nor replaces them.
 
-The catch is that neither side is normally started from a terminal, and a variable set in one only reaches what that terminal launches.
+The catch is that each side reads the variable from whatever starts it, and a variable set in a terminal only reaches what that terminal launches.
 
 **For the game.** RimWorld reads the variable once at startup, and a game started from the Steam or GOG launcher inherits the launcher's environment, not your shell's. Set the variable and start the executable from that same shell:
 
@@ -115,7 +130,7 @@ Select-String -Path "$env:USERPROFILE\AppData\LocalLow\Ludeon Studios\RimWorld b
 
 Look for `Requests must carry the shared secret in X-MCP-Token.` If you see `No shared secret configured.` instead, the variable did not reach the game.
 
-**For the MCP server.** Claude Desktop launches it, so set the variable for your user account and restart Claude Desktop; a value exported in a shell will not reach it. The Python server sends the secret as `X-MCP-Token` whenever the variable is set.
+**For the MCP server.** Claude Code starts it and passes on its own environment, so set the variable in the shell you start `claude` from, or for your user account, and restart Claude Code. `claude mcp add -e RIMWORLD_MCP_TOKEN=...` also works, but writes the value into Claude Code's configuration file in plain text. The Python server sends the secret as `X-MCP-Token` whenever the variable is set.
 
 **Re-check connectivity with the secret.** The check in step 3 carries no header, so repeat it with one:
 
@@ -273,7 +288,7 @@ After editing C# source, rebuild and restart RimWorld — the symlink means no c
 dotnet build MCP\Source\MCP\MCP.csproj
 ```
 
-After editing `main.py` or `shaping.py`, restart the MCP server process (or re-run `mcp dev main.py`).
+After editing `main.py` or `shaping.py`, restart Claude Code so that it starts the MCP server again (or re-run `mcp dev main.py`).
 
 The MCP server's tests run without the game, against a stand-in for the bridge. From the repository root:
 
