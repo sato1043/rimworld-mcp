@@ -5,6 +5,7 @@ tool arguments, the output schema and the client's error handling are all exerci
 """
 
 import asyncio
+import inspect
 import json
 import os
 import subprocess
@@ -15,6 +16,7 @@ import httpx
 import pytest
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import ToolAnnotations
 
 import main
 
@@ -270,15 +272,15 @@ def test_wrapping_leaves_what_each_tool_lists_but_its_output_schema():
 def test_a_tool_added_later_answers_the_same_way():
     server = main.RimWorldMCP("later")
 
-    @server.tool()
+    @server.tool(annotations=main.READS_GAME)
     async def mapping() -> dict | list:
         return {"a": [1, "ラベル"]}
 
-    @server.tool()
+    @server.tool(annotations=main.READS_GAME)
     def items() -> list:
         return [{"a": 1}, "x"]
 
-    @server.tool()
+    @server.tool(annotations=main.READS_GAME)
     async def label() -> str:
         return "晴れ"
 
@@ -293,7 +295,7 @@ def test_a_tool_added_later_answers_the_same_way():
 def test_a_value_json_cannot_hold_fails_the_call_naming_its_type():
     server = main.RimWorldMCP("later")
 
-    @server.tool()
+    @server.tool(annotations=main.READS_GAME)
     async def seasons() -> dict:
         return {"labels": {"夏"}}
 
@@ -306,7 +308,7 @@ def test_a_value_json_cannot_hold_fails_the_call_naming_its_type():
 def test_nan_is_written_as_fastmcp_wrote_it():
     server = main.RimWorldMCP("later")
 
-    @server.tool()
+    @server.tool(annotations=main.READS_GAME)
     async def reading() -> dict:
         return {"value": float("nan")}
 
@@ -321,10 +323,48 @@ def test_asking_for_structured_output_is_refused():
         return {}
 
     with pytest.raises(ValueError, match="structured_output"):
-        server.add_tool(mapping, structured_output=True)
+        server.add_tool(mapping, structured_output=True, annotations=main.READS_GAME)
+    # Given by position, last after name, title, description, annotations, icons, meta.
+    with pytest.raises(ValueError, match="structured_output"):
+        server.add_tool(mapping, "n", None, None, main.READS_GAME, None, None, True)
+    assert list(list_tools(server)) == []
     # Everything else reaches FastMCP as given, by position or by name.
-    server.add_tool(mapping, "renamed", structured_output=False)
+    server.add_tool(mapping, "renamed", structured_output=False,
+                    annotations=main.READS_GAME)
     assert list(list_tools(server)) == ["renamed"]
+
+
+def test_a_tool_without_annotations_is_refused():
+    server = main.RimWorldMCP("later")
+
+    async def mapping() -> dict:
+        return {}
+
+    every_hint = "readOnlyHint, destructiveHint, idempotentHint, openWorldHint"
+    with pytest.raises(ValueError, match=f"^mapping: .*unset: {every_hint}"):
+        server.tool()(mapping)
+    with pytest.raises(ValueError, match=f"^renamed: .*unset: {every_hint}"):
+        server.add_tool(mapping, "renamed")
+    with pytest.raises(ValueError, match=f"unset: {every_hint}"):
+        server.add_tool(mapping, annotations=ToolAnnotations())
+    with pytest.raises(ValueError, match=r"\(unset: destructiveHint, idempotentHint\)$"):
+        server.add_tool(mapping, annotations=ToolAnnotations(readOnlyHint=True,
+                                                            openWorldHint=False))
+    assert list(list_tools(server)) == []
+    # Given by position, after name, title and description.
+    server.add_tool(mapping, "renamed", None, None, main.READS_GAME)
+    assert list_tools(server)["renamed"].annotations.readOnlyHint is True
+
+
+def test_an_sdk_whose_add_tool_changed_is_named_as_the_cause(monkeypatch):
+    server = main.RimWorldMCP("later")
+
+    def add_tool(self, fn, name=None, hints=None, structured_output=None):
+        pass
+
+    monkeypatch.setattr(main.RimWorldMCP, "_ADD_TOOL", inspect.signature(add_tool))
+    with pytest.raises(TypeError, match=r"takes no annotations; "):
+        server.add_tool(len, annotations=main.READS_GAME)
 
 
 # ── Tool surface ──────────────────────────────────────────────────────────────
@@ -364,10 +404,6 @@ def test_new_arguments_are_optional_in_the_schemas():
         assert not args & set(schema.get("required", [])), name
     # Text like the other tools' optional arguments, not text-or-null.
     assert tools["get_animals"].inputSchema["properties"]["race"]["type"] == "string"
-
-
-def test_overview_is_marked_read_only():
-    assert list_tools()["get_colony_overview"].annotations.readOnlyHint is True
 
 
 # ── Events ────────────────────────────────────────────────────────────────────
@@ -412,13 +448,150 @@ def test_get_events_fails_with_the_bridges_reason(use_bridge):
     assert reason in result.content[0].text
 
 
-def test_get_events_takes_optional_text_and_is_marked_read_only():
-    tool = list_tools()["get_events"]
-    schema = tool.inputSchema
+def test_get_events_takes_optional_text():
+    schema = list_tools()["get_events"].inputSchema
     assert {"since", "limit"} <= set(schema["properties"])
     assert not {"since", "limit"} & set(schema.get("required", []))
     assert schema["properties"]["since"]["type"] == "string"
-    assert tool.annotations.readOnlyHint is True
+
+
+# ── Annotations ───────────────────────────────────────────────────────────────
+
+# What each tool declares, written out here rather than read from main.py, so that a
+# tool added or changed there without a matching row fails below. The values are
+# copied, under the names main.py gives them; the rules for the rows are those beside
+# the constants in main.py.
+READS_GAME = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True,
+              "openWorldHint": False}
+CHANGES_GAME_ONCE = {"readOnlyHint": False, "destructiveHint": True,
+                     "idempotentHint": True, "openWorldHint": False}
+CHANGES_GAME_EACH_CALL = {"readOnlyHint": False, "destructiveHint": True,
+                          "idempotentHint": False, "openWorldHint": False}
+ADDS_TO_GAME_EACH_CALL = {"readOnlyHint": False, "destructiveHint": False,
+                          "idempotentHint": False, "openWorldHint": False}
+
+READ_TOOLS = [
+    "get_game_state", "get_weather", "get_colony_overview", "get_pawns",
+    "get_pawn_status", "get_pawn_health", "get_pawn_needs", "get_pawn_mood",
+    "get_pawn_inventory", "get_animals", "get_enemies", "get_fertile_cells",
+    "get_things", "get_buildings", "get_designations", "get_research", "ping",
+    "get_pawn_traits", "get_pawn_relations", "get_pawn_work", "get_pawn_schedule",
+    "get_power", "get_rooms", "get_zones", "get_prisoners", "get_colony", "get_threats",
+    "get_cell_info", "get_cells_info", "list_areas", "list_zones",
+    "get_animal_training", "get_caravans", "get_world_factions", "get_world_sites",
+    "get_messages", "get_events", "get_alerts", "get_medical", "get_production",
+    "get_pawn_backstory", "get_pawn_capacities", "get_pawn_psycasts", "get_pawn_genes",
+    "get_pawn_area", "get_stockpile_contents", "get_corpses", "get_drug_policies",
+    "get_room_assignments", "get_mechs", "get_incidents", "get_colony_social",
+    "get_apparel", "get_traders", "get_quests", "get_ideology",
+]
+
+WRITE_TOOLS = {
+    "draft_pawn": CHANGES_GAME_ONCE,
+    "move_pawn": CHANGES_GAME_EACH_CALL,
+    "attack_target": CHANGES_GAME_EACH_CALL,
+    "assign_job": CHANGES_GAME_EACH_CALL,
+    "rescue_pawn": CHANGES_GAME_EACH_CALL,
+    "hunt_animal": CHANGES_GAME_ONCE,
+    "mine_cell": CHANGES_GAME_ONCE,
+    "cut_plant": CHANGES_GAME_ONCE,
+    "place_blueprint": CHANGES_GAME_EACH_CALL,
+    "forbid_thing": CHANGES_GAME_ONCE,
+    "set_research": CHANGES_GAME_ONCE,
+    "set_pause": CHANGES_GAME_ONCE,
+    "set_time_speed": CHANGES_GAME_ONCE,
+    "create_allowed_area": ADDS_TO_GAME_EACH_CALL,
+    "clear_area": CHANGES_GAME_ONCE,
+    "delete_area": CHANGES_GAME_ONCE,
+    "delete_zone": CHANGES_GAME_EACH_CALL,
+    "add_bill": CHANGES_GAME_EACH_CALL,
+    "remove_bill": CHANGES_GAME_ONCE,
+    "equip_item": CHANGES_GAME_EACH_CALL,
+    "recruit_prisoner": CHANGES_GAME_EACH_CALL,
+    "assign_bed": CHANGES_GAME_ONCE,
+    "set_allowed_area": CHANGES_GAME_ONCE,
+    "set_schedule_hour": CHANGES_GAME_ONCE,
+    "set_passion": CHANGES_GAME_ONCE,
+    "queue_medical_operation": CHANGES_GAME_EACH_CALL,
+    "deconstruct": CHANGES_GAME_ONCE,
+    "area_paint": CHANGES_GAME_ONCE,
+    "set_zone_plant": CHANGES_GAME_ONCE,
+    "set_stockpile_priority": CHANGES_GAME_ONCE,
+    "set_stockpile_filter": CHANGES_GAME_ONCE,
+}
+
+HINTS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+
+
+def declared(tool) -> dict:
+    return {h: getattr(tool.annotations, h, None) for h in HINTS}
+
+
+def test_every_tool_declares_every_hint():
+    # An unset hint takes the MCP default, which describes a destructive write.
+    tools = list_tools()
+    unset = {n: [h for h, v in declared(t).items() if v is None] for n, t in tools.items()}
+    assert {n: hints for n, hints in unset.items() if hints} == {}
+    assert [n for n, t in tools.items() if declared(t)["openWorldHint"] is not False] == []
+
+
+def test_every_tool_declares_what_its_row_says():
+    assert len(READ_TOOLS) == len(set(READ_TOOLS))
+    # A tool moved between the two keeps no row in the one it left.
+    assert sorted(set(READ_TOOLS) & set(WRITE_TOOLS)) == []
+    expected = {name: READS_GAME for name in READ_TOOLS} | WRITE_TOOLS
+    tools = list_tools()
+    assert sorted(set(tools) - set(expected)) == []  # a tool without a row
+    assert sorted(set(expected) - set(tools)) == []  # a row without a tool
+    assert {n: declared(t) for n, t in tools.items() if declared(t) != expected[n]} == {}
+
+
+def placeholder_arguments(schema: dict) -> dict:
+    """A value of the declared type for each required argument.
+
+    Only string, integer, number and boolean are made; a tool with a required argument
+    of another type, or of a union with no single type, stops here with a KeyError and
+    gets a value added.
+    """
+    values = {"string": "1", "integer": 1, "number": 1, "boolean": True}
+    return {name: values[schema["properties"][name]["type"]]
+            for name in schema.get("required", [])}
+
+
+# Taken when the tests are collected. pytest turns an empty list into one skip, so the
+# test below it checks the list against what the server lists.
+TOOL_NAMES = sorted(t.name for t in main.mcp._tool_manager.list_tools())
+
+
+def test_every_listed_tool_is_checked_against_what_it_sends():
+    assert TOOL_NAMES == sorted(list_tools())
+    assert TOOL_NAMES
+
+
+@pytest.mark.parametrize("name", TOOL_NAMES)
+def test_a_tool_sends_what_it_declares(name, use_bridge):
+    # Read from the bridge requests alone, not from the rows above, so that a row and a
+    # declaration changed together still fail here when the tool does otherwise. Only
+    # readOnlyHint can be read this way; destructiveHint and idempotentHint are held
+    # by the rows alone. It sees the one path taken with the required arguments alone
+    # and an empty answer: a tool that reads, then writes on what it read, is not
+    # followed past its first answer, and a write that also reads fails here, so such
+    # a tool needs this check revisited when it is added.
+    sent = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        sent.append((request.method, request.url.path))
+        return httpx.Response(200, json={})
+
+    use_bridge(httpx.MockTransport(handle))
+    tool = list_tools()[name]
+    # The answer is not what the tool expects and may fail it; only the requests count.
+    call_result(name, placeholder_arguments(tool.inputSchema))
+    assert sent, "sent nothing to the bridge"
+    if declared(tool)["readOnlyHint"] is True:
+        assert [s for s in sent if s[0] != "GET"] == []
+    else:
+        assert [s for s in sent if s[0] != "POST" or not s[1].startswith("/command/")] == []
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

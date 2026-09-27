@@ -119,7 +119,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppState]:
         yield AppState(http=client)
 
 
-# ── Server: every tool replies in compact JSON ────────────────────────────────
+# ── Server: tools reply in compact JSON and declare their annotations ─────────
 
 class RimWorldMCP(FastMCP):
     """FastMCP whose tools reply with their result as one block of JSON text without
@@ -138,7 +138,19 @@ class RimWorldMCP(FastMCP):
     A tool function keeps its annotation (-> dict, -> list), which says what it
     returns; the client receives that value as JSON text. The two differ on purpose,
     which is why the wrapping and the refusal of structured output live together here.
+
+    The same place refuses a tool that does not say what it does to the game: every
+    tool sets all four annotation hints (see READS_GAME below), so that a tool added
+    later fails when the server starts instead of reaching a client described by the
+    MCP defaults.
     """
+
+    # The parameters of FastMCP.add_tool read below. An SDK whose add_tool lacks them
+    # is refused with its own message, rather than every tool being refused for
+    # annotations it does have.
+    _ADD_TOOL = inspect.signature(FastMCP.add_tool)
+    _PARAMETERS_USED = {"fn", "name", "annotations", "structured_output"}
+    _HINTS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
 
     @staticmethod
     def _replying_in_compact_json(fn):
@@ -160,18 +172,78 @@ class RimWorldMCP(FastMCP):
             return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
         return reply
 
-    def add_tool(self, fn, *args, structured_output: bool | None = None, **kwargs) -> None:
+    def add_tool(self, fn, *args, **kwargs) -> None:
+        missing = self._PARAMETERS_USED - self._ADD_TOOL.parameters.keys()
+        if missing:
+            raise TypeError(f"FastMCP.add_tool{self._ADD_TOOL} takes no "
+                            f"{', '.join(sorted(missing))}; this version of the mcp SDK "
+                            "is not one RimWorldMCP was written for")
+        # Positional and keyword arguments are read the same way, as FastMCP reads them.
+        given = self._ADD_TOOL.bind(self, fn, *args, **kwargs)
+        name = given.arguments.get("name") or getattr(fn, "__name__", fn)
         # The wrapped tool returns text, which an output schema would not match, and
         # that text is the whole reply, so nothing is sent again as structured
         # content. Asking for it is refused rather than dropped without a word.
-        if structured_output:
-            raise ValueError(f"{getattr(fn, '__name__', fn)}: RimWorldMCP tools reply "
-                             "in JSON text only; structured_output=True cannot apply")
-        super().add_tool(self._replying_in_compact_json(fn), *args,
-                         structured_output=False, **kwargs)
+        if given.arguments.get("structured_output"):
+            raise ValueError(f"{name}: RimWorldMCP tools reply in JSON text only; "
+                             "structured_output=True cannot apply")
+        # An unset hint takes the MCP default, which describes a destructive write to an
+        # open world; a tool that leaves any hint unset is refused when the server starts.
+        annotations = given.arguments.get("annotations")
+        unset = [h for h in self._HINTS if getattr(annotations, h, None) is None]
+        if unset:
+            raise ValueError(f"{name}: give the tool annotations setting every hint, as "
+                             "READS_GAME, CHANGES_GAME_ONCE, CHANGES_GAME_EACH_CALL and "
+                             f"ADDS_TO_GAME_EACH_CALL do (unset: {', '.join(unset)})")
+        given.arguments["fn"] = self._replying_in_compact_json(fn)
+        given.arguments["structured_output"] = False
+        super().add_tool(*given.args[1:], **given.kwargs)
 
 
 mcp = RimWorldMCP("RimWorldMCP", lifespan=lifespan, json_response=True)
+
+
+# ── Tool annotations: what each tool does to the game ─────────────────────────
+# Every tool names one of these, so that a client can tell the reads from the writes
+# before a call; RimWorldMCP.add_tool refuses a tool that leaves any hint unset. An
+# unset hint takes the MCP default, which describes a tool as one that may change its
+# world destructively. Every hint is set, even where the specification gives it no
+# meaning (destructive and idempotent on a read), for a client that reads each hint
+# alone. The rules below decide which constant a tool names, and the tests hold the
+# constant each tool is expected to name. A tool that fits none of the four gets a
+# constant of its own. The meanings are the specification's:
+#   readOnlyHint    - true when the tool sends the bridge only GET requests; a tool
+#                     that sends POST /command/* is a write.
+#   destructiveHint - false only when the tool purely adds (a new area); overwriting
+#                     or removing anything, or ordering something destroyed (a hunt,
+#                     a deconstruction, a surgery), is destructive. When unsure, true.
+#   idempotentHint  - true when repeating the call with the same arguments changes
+#                     nothing further (a second designation is refused); false when
+#                     it restarts a job or adds another, or when it finds its target
+#                     by a name or label another may share and takes the target out
+#                     of those it searches (a recruited prisoner, a deleted zone), so
+#                     that the same call again reaches the next one. A call the
+#                     bridge timed out on still runs in the game later, so a client's
+#                     retry is a second call. When unsure, false.
+#   openWorldHint   - false throughout: every tool reaches one game and nothing else.
+#                     The text a tool returns still comes from the game, its mods and
+#                     its players, and is no more trusted for that.
+
+# A read: sends the bridge only GET requests; not destructive, idempotent.
+READS_GAME = ToolAnnotations(readOnlyHint=True, destructiveHint=False,
+                             idempotentHint=True, openWorldHint=False)
+# A write whose result overwrites, removes or destroys something (destructive); the
+# same arguments again change nothing further (idempotent).
+CHANGES_GAME_ONCE = ToolAnnotations(readOnlyHint=False, destructiveHint=True,
+                                    idempotentHint=True, openWorldHint=False)
+# A write whose result overwrites, removes or destroys something (destructive), and
+# which changes the game again on every call with the same arguments (not idempotent).
+CHANGES_GAME_EACH_CALL = ToolAnnotations(readOnlyHint=False, destructiveHint=True,
+                                         idempotentHint=False, openWorldHint=False)
+# A write that only adds to the game and overwrites or destroys nothing (not
+# destructive), one more on every call (not idempotent).
+ADDS_TO_GAME_EACH_CALL = ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                         idempotentHint=False, openWorldHint=False)
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -198,7 +270,7 @@ async def resource_pawns() -> str:
 
 # ── Tools: World / map overview ───────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_game_state(ctx: Context[ServerSession, AppState]) -> dict:
     """
     High-level summary of the current RimWorld session:
@@ -210,7 +282,7 @@ async def get_game_state(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_weather(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Current weather, outdoor temperature (Celsius), wind speed, season, and day of year.
@@ -288,7 +360,7 @@ async def collect_overview(client: httpx.AsyncClient) -> dict:
     return overview
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=READS_GAME)
 async def get_colony_overview(ctx: Context[ServerSession, AppState]) -> dict:
     """
     One-call situation report. Its sections hold what these tools return:
@@ -306,7 +378,7 @@ async def get_colony_overview(ctx: Context[ServerSession, AppState]) -> dict:
 
 # ── Tools: Colonists ──────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawns(ctx: Context[ServerSession, AppState]) -> list:
     """
     List every colonist with: id, name, position, health (0-1), drafted state,
@@ -318,7 +390,7 @@ async def get_pawns(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_status(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -332,7 +404,7 @@ async def get_pawn_status(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_health(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -351,7 +423,7 @@ async def get_pawn_health(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_needs(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -366,7 +438,7 @@ async def get_pawn_needs(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_mood(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -382,7 +454,7 @@ async def get_pawn_mood(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_inventory(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -399,7 +471,7 @@ async def get_pawn_inventory(
 
 # ── Tools: Creatures on map ───────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_animals(
     ctx: Context[ServerSession, AppState],
     race: str = "",
@@ -419,7 +491,7 @@ async def get_animals(
     return shape_animals(r.json(), race=race, detail=detail)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_enemies(ctx: Context[ServerSession, AppState]) -> list:
     """
     All hostile pawns on the map: id, name, race, faction, position, health,
@@ -432,7 +504,7 @@ async def get_enemies(ctx: Context[ServerSession, AppState]) -> list:
 
 # ── Tools: Map resources ──────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_fertile_cells(ctx: Context[ServerSession, AppState]) -> list:
     """
     Top 100 most fertile map cells (fertility > 0.5), sorted descending.
@@ -444,7 +516,7 @@ async def get_fertile_cells(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_things(ctx: Context[ServerSession, AppState]) -> list:
     """
     All haulable items on the map grouped by type, showing total stack counts.
@@ -456,7 +528,7 @@ async def get_things(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_buildings(
     ctx: Context[ServerSession, AppState],
     detail: bool = False,
@@ -476,7 +548,7 @@ async def get_buildings(
     return shape_buildings(r.json(), detail=detail)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_designations(ctx: Context[ServerSession, AppState]) -> list:
     """
     All active map designations: Hunt, Mine, CutPlant, etc.
@@ -489,7 +561,7 @@ async def get_designations(ctx: Context[ServerSession, AppState]) -> list:
 
 # ── Tools: Research ───────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_research(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Research status: current active project with progress (0-1), and all available
@@ -502,7 +574,7 @@ async def get_research(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_research(
     project_def: str,
     ctx: Context[ServerSession, AppState],
@@ -520,7 +592,7 @@ async def set_research(
 
 # ── Tools: Pawn orders ────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def draft_pawn(
     pawn_id: str,
     drafted: bool,
@@ -540,7 +612,7 @@ async def draft_pawn(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def move_pawn(
     pawn_id: str,
     x: int,
@@ -560,7 +632,7 @@ async def move_pawn(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def attack_target(
     pawn_id: str,
     target_id: str,
@@ -581,7 +653,7 @@ async def attack_target(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def assign_job(
     pawn_id: str,
     job: str,
@@ -604,7 +676,7 @@ async def assign_job(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def rescue_pawn(
     pawn_id: str,
     target_id: str,
@@ -625,7 +697,7 @@ async def rescue_pawn(
 
 # ── Tools: Map designations ───────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def hunt_animal(
     target_id: str,
     ctx: Context[ServerSession, AppState],
@@ -640,7 +712,7 @@ async def hunt_animal(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def mine_cell(
     x: int,
     z: int,
@@ -655,7 +727,7 @@ async def mine_cell(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def cut_plant(
     ctx: Context[ServerSession, AppState],
     target_id: str = "",
@@ -676,7 +748,9 @@ async def cut_plant(
 
 # ── Tools: Construction ───────────────────────────────────────────────────────
 
-@mcp.tool()
+# Destructive: a floor laid on a floor replaces it. Not known whether the game refuses
+# the same blueprint a second time, so not idempotent, as when unsure.
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def place_blueprint(
     def_name: str,
     x: int,
@@ -688,12 +762,15 @@ async def place_blueprint(
     """
     Place a construction blueprint at map cell (x, z). Colonists will gather
     materials and build it automatically.
-    def_name: ThingDef defName of the buildable structure.
-      Examples: Wall, Door, Bed, SleepingSpot, DiningChair, TableMealSimple,
-      Cooler, Heater, SolarGenerator, WindTurbine, Sandbags, TurretGun, StockpileLarge.
-    rotation: North / South / East / West (default North).
-    stuff_def: optional material (WoodLog, Steel, Granite, Plasteel).
-      Defaults to cheapest available if omitted.
+    def_name: ThingDef defName of a structure the player can build.
+      Examples: Wall, Door, Bed, SleepingSpot, DiningChair, Table2x2c, Shelf,
+      Cooler, Heater, SolarGenerator, WindTurbine, Sandbags, Turret_MiniTurret.
+      Floors and zones (a stockpile is a zone) cannot be placed with this tool.
+    rotation: North / South / East / West (default North); anything else is
+      taken as North.
+    stuff_def: optional material (WoodLog, Steel, BlocksGranite, Plasteel).
+      If omitted, or not a known defName, the game's default material for the
+      structure is used. The reply's rotation and stuff say what was placed.
     """
     r = await _client(ctx).post(
         "/command/build",
@@ -711,7 +788,7 @@ async def place_blueprint(
 
 # ── Tools: Item management ────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def forbid_thing(
     thing_id: str,
     ctx: Context[ServerSession, AppState],
@@ -733,7 +810,7 @@ async def forbid_thing(
 
 # ── Tools: Ping / game control ───────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def ping(ctx: Context[ServerSession, AppState]) -> dict:
     """Connectivity test. Returns status=pong if the bridge is reachable."""
     r = await _client(ctx).get("/ping")
@@ -741,7 +818,7 @@ async def ping(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_pause(
     paused: bool,
     ctx: Context[ServerSession, AppState],
@@ -755,7 +832,7 @@ async def set_pause(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_time_speed(
     speed: int,
     ctx: Context[ServerSession, AppState],
@@ -771,7 +848,7 @@ async def set_time_speed(
 
 # ── Tools: Deeper pawn understanding ─────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_traits(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -786,7 +863,7 @@ async def get_pawn_traits(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_relations(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -801,7 +878,7 @@ async def get_pawn_relations(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_work(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -816,7 +893,7 @@ async def get_pawn_work(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_schedule(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -832,7 +909,7 @@ async def get_pawn_schedule(
 
 # ── Tools: Colony infrastructure ─────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_power(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Power grid summary: total generation (W), total consumption (W), net per second,
@@ -844,7 +921,7 @@ async def get_power(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_rooms(ctx: Context[ServerSession, AppState]) -> list:
     """
     All indoor rooms in the colony: role (bedroom/dining/etc.), cell count,
@@ -856,7 +933,7 @@ async def get_rooms(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_zones(ctx: Context[ServerSession, AppState]) -> dict:
     """
     All map zones in two sections:
@@ -868,7 +945,7 @@ async def get_zones(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_prisoners(ctx: Context[ServerSession, AppState]) -> list:
     """
     All prisoners in the colony: name, race, faction, health, mood, guest status,
@@ -879,7 +956,7 @@ async def get_prisoners(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_colony(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Aggregate colony overview:
@@ -893,7 +970,7 @@ async def get_colony(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_threats(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Current threat snapshot:
@@ -911,7 +988,7 @@ async def get_threats(ctx: Context[ServerSession, AppState]) -> dict:
 
 # ── Tools: Map cells ─────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_cell_info(
     x: int,
     z: int,
@@ -927,7 +1004,7 @@ async def get_cell_info(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_cells_info(
     x1: int,
     z1: int,
@@ -947,7 +1024,7 @@ async def get_cells_info(
 
 # ── Tools: Areas / zones ──────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def list_areas(ctx: Context[ServerSession, AppState]) -> list:
     """
     All map areas: home area, allowed areas, roof areas, etc.
@@ -958,7 +1035,7 @@ async def list_areas(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def list_zones(ctx: Context[ServerSession, AppState]) -> dict:
     """
     All map zones: growing zones (with plant/growth info) and stockpile zones.
@@ -969,7 +1046,7 @@ async def list_zones(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=ADDS_TO_GAME_EACH_CALL)
 async def create_allowed_area(
     label: str,
     ctx: Context[ServerSession, AppState],
@@ -983,7 +1060,7 @@ async def create_allowed_area(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def clear_area(
     area_id: int,
     ctx: Context[ServerSession, AppState],
@@ -997,7 +1074,7 @@ async def clear_area(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def delete_area(
     area_id: int,
     ctx: Context[ServerSession, AppState],
@@ -1011,7 +1088,9 @@ async def delete_area(
     return r.json()
 
 
-@mcp.tool()
+# Not idempotent: a zone found by a label another zone shares is deleted, and the same
+# call again deletes the other.
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def delete_zone(
     zone_id: str,
     ctx: Context[ServerSession, AppState],
@@ -1027,7 +1106,7 @@ async def delete_zone(
 
 # ── Tools: Animals ────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_animal_training(
     ctx: Context[ServerSession, AppState],
     detail: bool = False,
@@ -1045,7 +1124,7 @@ async def get_animal_training(
 
 # ── Tools: World map ──────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_caravans(ctx: Context[ServerSession, AppState]) -> list:
     """
     All player-controlled caravans on the world map: name, current tile,
@@ -1056,7 +1135,7 @@ async def get_caravans(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_world_factions(ctx: Context[ServerSession, AppState]) -> list:
     """
     All known factions with current goodwill (-100 to 100), relation type
@@ -1068,7 +1147,7 @@ async def get_world_factions(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_world_sites(ctx: Context[ServerSession, AppState]) -> list:
     """
     All faction settlements and world sites: name, owning faction,
@@ -1081,7 +1160,7 @@ async def get_world_sites(ctx: Context[ServerSession, AppState]) -> list:
 
 # ── Tools: Events / status ────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_messages(ctx: Context[ServerSession, AppState]) -> list:
     """
     Recent game letters (up to 30): label and type.
@@ -1092,7 +1171,7 @@ async def get_messages(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=READS_GAME)
 async def get_events(
     ctx: Context[ServerSession, AppState],
     since: str = "",
@@ -1129,7 +1208,7 @@ async def get_events(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_alerts(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Computed alert snapshot: low food, power deficit, active fires, hostile count,
@@ -1141,7 +1220,7 @@ async def get_alerts(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_medical(ctx: Context[ServerSession, AppState]) -> list:
     """
     All pawns (colonists, prisoners, visitors) with tendable hediffs.
@@ -1155,7 +1234,7 @@ async def get_medical(ctx: Context[ServerSession, AppState]) -> list:
 
 # ── Tools: Production ─────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_production(ctx: Context[ServerSession, AppState]) -> list:
     """
     All workbenches that have active bills, with each bill's label, recipe,
@@ -1167,7 +1246,9 @@ async def get_production(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+# Destructive although it adds a bill: the recipe may consume things (butchering,
+# cremation).
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def add_bill(
     bench_id: str,
     recipe_def: str,
@@ -1191,7 +1272,7 @@ async def add_bill(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def remove_bill(
     bench_id: str,
     bill_id: str,
@@ -1212,7 +1293,9 @@ async def remove_bill(
 
 # ── Tools: Colonist management ────────────────────────────────────────────────
 
-@mcp.tool()
+# Destructive: the item takes the place of what the pawn held. Not known whether the
+# game refuses the same item a second time, so not idempotent, as when unsure.
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def equip_item(
     pawn_id: str,
     item_id: str,
@@ -1234,7 +1317,9 @@ async def equip_item(
     return r.json()
 
 
-@mcp.tool()
+# Not idempotent: a prisoner found by a name another prisoner shares is recruited, and
+# the same call again recruits the other.
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def recruit_prisoner(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -1249,7 +1334,7 @@ async def recruit_prisoner(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def assign_bed(
     pawn_id: str,
     bed_id: str,
@@ -1272,7 +1357,7 @@ async def assign_bed(
 
 # ── Tools: Pawn depth (DLC-aware) ────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_backstory(pawn_id: str, ctx: Context[ServerSession, AppState]) -> dict:
     """Childhood and adulthood backstory for a colonist, including title and description."""
     r = await _client(ctx).get(f"/pawn/{pawn_id}/backstory")
@@ -1280,7 +1365,7 @@ async def get_pawn_backstory(pawn_id: str, ctx: Context[ServerSession, AppState]
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_capacities(pawn_id: str, ctx: Context[ServerSession, AppState]) -> dict:
     """
     All body capacity levels for a colonist (manipulation, sight, moving, talking, etc.)
@@ -1291,7 +1376,7 @@ async def get_pawn_capacities(pawn_id: str, ctx: Context[ServerSession, AppState
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_psycasts(pawn_id: str, ctx: Context[ServerSession, AppState]) -> dict:
     """
     Psychic status for a colonist (requires Royalty DLC): psyfocus, neural heat,
@@ -1303,7 +1388,7 @@ async def get_pawn_psycasts(pawn_id: str, ctx: Context[ServerSession, AppState])
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_genes(pawn_id: str, ctx: Context[ServerSession, AppState]) -> dict:
     """
     Xenotype and gene list for a colonist (requires Biotech DLC): xenotype name,
@@ -1314,7 +1399,7 @@ async def get_pawn_genes(pawn_id: str, ctx: Context[ServerSession, AppState]) ->
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_pawn_area(pawn_id: str, ctx: Context[ServerSession, AppState]) -> dict:
     """Current allowed-area assignment for a colonist (unrestricted or a specific area id/label)."""
     r = await _client(ctx).get(f"/pawn/{pawn_id}/area")
@@ -1324,7 +1409,7 @@ async def get_pawn_area(pawn_id: str, ctx: Context[ServerSession, AppState]) -> 
 
 # ── Tools: Map resources ──────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_stockpile_contents(ctx: Context[ServerSession, AppState]) -> list:
     """
     All stockpile zones with their current contents (grouped by item type),
@@ -1335,7 +1420,7 @@ async def get_stockpile_contents(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_corpses(ctx: Context[ServerSession, AppState]) -> list:
     """
     All corpses on the map: pawn name, race, faction, position, rot progress, and
@@ -1346,7 +1431,7 @@ async def get_corpses(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_drug_policies(ctx: Context[ServerSession, AppState]) -> dict:
     """
     All defined drug policies and which policy each colonist is currently assigned to.
@@ -1356,7 +1441,7 @@ async def get_drug_policies(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_room_assignments(ctx: Context[ServerSession, AppState]) -> list:
     """
     All beds that have assigned colonists: bed id, label, position, whether it is a
@@ -1367,7 +1452,7 @@ async def get_room_assignments(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_mechs(ctx: Context[ServerSession, AppState]) -> list:
     """
     Mechanitor colonists and their controlled mechs (requires Biotech DLC).
@@ -1378,7 +1463,7 @@ async def get_mechs(ctx: Context[ServerSession, AppState]) -> list:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_incidents(ctx: Context[ServerSession, AppState]) -> list:
     """Recent archived game letters (up to 30): label and type. Use to review past events."""
     r = await _client(ctx).get("/incidents")
@@ -1388,7 +1473,7 @@ async def get_incidents(ctx: Context[ServerSession, AppState]) -> list:
 
 # ── Tools: Colonist management commands ──────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_allowed_area(
     pawn_id: str,
     ctx: Context[ServerSession, AppState],
@@ -1403,7 +1488,7 @@ async def set_allowed_area(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_schedule_hour(
     pawn_id: str,
     hour: int,
@@ -1423,7 +1508,7 @@ async def set_schedule_hour(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_passion(
     pawn_id: str,
     skill_def: str,
@@ -1443,7 +1528,8 @@ async def set_passion(
     return r.json()
 
 
-@mcp.tool()
+# Destructive although it adds a bill: the surgery may remove a body part.
+@mcp.tool(annotations=CHANGES_GAME_EACH_CALL)
 async def queue_medical_operation(
     pawn_id: str,
     recipe_def: str,
@@ -1463,7 +1549,7 @@ async def queue_medical_operation(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def deconstruct(thing_id: str, ctx: Context[ServerSession, AppState]) -> dict:
     """
     Designate a player-built structure for deconstruction.
@@ -1479,7 +1565,7 @@ async def deconstruct(thing_id: str, ctx: Context[ServerSession, AppState]) -> d
 
 # ── Tools: Zone/area management commands ──────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def area_paint(
     area_id: int,
     x1: int, z1: int,
@@ -1500,7 +1586,7 @@ async def area_paint(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_zone_plant(
     zone_id: str,
     plant_def: str,
@@ -1519,7 +1605,7 @@ async def set_zone_plant(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_stockpile_priority(
     zone_id: str,
     priority: str,
@@ -1538,7 +1624,7 @@ async def set_stockpile_priority(
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES_GAME_ONCE)
 async def set_stockpile_filter(
     zone_id: str,
     action: str,
@@ -1563,7 +1649,7 @@ async def set_stockpile_filter(
 
 # ── Tools: Colony social ─────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_colony_social(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Colony-wide social snapshot:
@@ -1579,7 +1665,7 @@ async def get_colony_social(ctx: Context[ServerSession, AppState]) -> dict:
 
 # ── Tools: Apparel ────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_apparel(ctx: Context[ServerSession, AppState]) -> dict:
     """
     Available apparel policies and which policy each colonist is currently using.
@@ -1591,7 +1677,7 @@ async def get_apparel(ctx: Context[ServerSession, AppState]) -> dict:
 
 # ── Tools: Trading / quests / ideology ───────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_traders(ctx: Context[ServerSession, AppState]) -> dict:
     """
     All available traders in two sections:
@@ -1604,7 +1690,7 @@ async def get_traders(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_quests(ctx: Context[ServerSession, AppState]) -> dict:
     """
     All quests sorted by display order: id, name, state (Ongoing/EndedSuccess/etc.),
@@ -1616,7 +1702,7 @@ async def get_quests(ctx: Context[ServerSession, AppState]) -> dict:
     return r.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS_GAME)
 async def get_ideology(ctx: Context[ServerSession, AppState]) -> dict:
     """
     The colony's ideology (requires Ideology DLC): name, memes (core beliefs),

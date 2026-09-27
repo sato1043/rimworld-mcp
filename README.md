@@ -158,6 +158,8 @@ Three tools also return less by default, to save tokens. A prompt or program tha
 
 Every tool now replies with one block of JSON text without indentation, which takes the model fewer tokens to read. A tool that returns a list used to send one content block per item, and no block at all for an empty list; it now sends the whole list as one JSON array, `[]` when empty. Nothing is sent as structured content, as before. A program that read the blocks one by one should parse the single block as JSON instead. To read a reply yourself, pass it through a JSON formatter such as `jq .`.
 
+Every tool now declares MCP tool annotations: whether it only reads the game, whether its result destroys or overwrites something, and whether repeating the same call changes anything further. They are hints for a client, not a boundary: whether a write asks you first is still set by your client's permission settings.
+
 ## What Claude can do
 
 ### Read game state
