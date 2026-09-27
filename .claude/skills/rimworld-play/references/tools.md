@@ -55,8 +55,7 @@ tool の説明文に無い使い方だけを書く。説明文の事実は説明
 - **`place_blueprint` は 1 回で 1 マスに 1 つ置く。** 壁で部屋を囲むと、壁の数だけ
   呼ぶことになる
 - **`place_blueprint` が置けるのは建物（ThingDef）だけである。** 床（TerrainDef）と
-  ゾーンは置けない。説明文の例にある `StockpileLarge` は建物でないので失敗する
-  （TASK0012 で扱う）
+  ゾーンは置けない
 - **`place_blueprint` は、向きと素材の誤りを黙って既定へ倒す。** 向きが `North`・
   `South`・`East`・`West` のどれでもなければ `North` にする。素材の defName が
   見つからなければ既定の素材にする。応答の `rotation` と `stuff` で結果を確かめる
