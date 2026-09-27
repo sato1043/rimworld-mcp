@@ -49,17 +49,25 @@ upstream never touched a fork-local file, so neither does the commit it squashed
 A topic branch is created together with a worktree, so that the primary checkout stays
 on `develop`.
 
-Worktrees live under `../rimworld-mcp.worktrees/<slug>`, a sibling of the primary
-checkout, so that the repository directory itself stays uncluttered.
+Worktrees live under `$HOME/worktrees/rimworld-mcp/<slug>`, outside the repository. This
+is where the WorktreeCreate hook of the owner's Claude Code configuration puts them.
+
+An agent creates one from the primary checkout with `EnterWorktree(name=<slug>)`, then
+cuts the branch inside it:
 
 ```sh
-git worktree add ../rimworld-mcp.worktrees/<slug> -b task/<id>-<slug> develop
+git switch -c task/<id>-<slug>
 ```
 
-Run this from the primary checkout. The path is resolved against the current directory,
-so from inside another worktree it creates
-`rimworld-mcp.worktrees/rimworld-mcp.worktrees/<slug>`. From a worktree, use
-`../<slug>` instead.
+The hook creates the worktree detached at the HEAD of the checkout it is called from, and
+names the directory after that checkout. Called from inside another worktree, it would
+start from that worktree's HEAD and put the new one under that worktree's name.
+
+By hand, the equivalent is (one command; it reads the same in bash and PowerShell):
+
+```sh
+git worktree add "$HOME/worktrees/rimworld-mcp/<slug>" -b task/<id>-<slug> develop
+```
 
 Two properties of this repository matter when working from a worktree:
 
@@ -83,7 +91,7 @@ Then remove the worktree, and only then delete the branch — `git branch -D` fa
 the branch is checked out in a worktree.
 
 ```sh
-git worktree remove ../rimworld-mcp.worktrees/<slug>
+git worktree remove "$HOME/worktrees/rimworld-mcp/<slug>"
 git branch -D task/<id>-<slug>
 ```
 

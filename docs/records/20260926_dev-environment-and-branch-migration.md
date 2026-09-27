@@ -1,6 +1,7 @@
 # 開発環境の構築と develop メインラインへの移行
 
-- 作業日: 2026-09-25（2026-09-26 に「ターゲットフレームワーク net472 の妥当性」を追記）
+- 作業日: 2026-09-25（2026-09-26 に「ターゲットフレームワーク net472 の妥当性」を、
+  2026-09-27 に「worktree の置き場所の移し替え」を追記）
 - 対象: 開発機（Windows 11 Pro 10.0.26200 / Git Bash）と `sato1043/rimworld-mcp`（fork）
 - 位置づけ: **fork の所有者による変更の記録**。upstream（`allenmonkey970/rimworld-mcp`）の
   判断・方針ではない
@@ -185,6 +186,26 @@ Steam 版 RimWorld の導入先で観測した（確度 A）。DLL は
 
 この節の調査は新しい判断点を立てない（2026-09-26 検分。本節の全項）。
 
+## worktree の置き場所の移し替え
+
+2026-09-27。置き場所を、利用者の Claude Code 設定が持つ WorktreeCreate hook の規則
+（`$HOME/worktrees/<repo>/<name>`）へ揃えた。裁定は「要裁定の判断点」の節が持つ。
+
+動機: 旧い形では、エージェントは `git worktree add` の後に `EnterWorktree(path=...)` で
+移る。この移動のたびに、リポジトリ外の worktree への permission-root の移し替えの確認が
+出ていた（利用者の申告、確度 B）。
+
+主チェックアウトから `EnterWorktree(name=worktree-location)` を呼んで観測した（確度 A）:
+
+- worktree は `C:/Users/sato1043/worktrees/rimworld-mcp/worktree-location` に作られた
+- 作られた直後の HEAD は `54044ec` で、`develop` と一致した。ブランチは付かない
+  （detached）。`git switch -c task/worktree-location` で切れた
+- linked worktree の中では `git rev-parse --show-toplevel` がその worktree のパスを返す。
+  hook はこの値の basename をリポジトリ名に使うので、worktree の中から起動すると置き場所が
+  その worktree の名前の下へずれる（確度 C。hook を読んで導いた。起動しては試していない）
+- この時点の linked worktree は 3 本（旧い置き場所の `event-log`・`event-log-impl` と
+  本件）で、hook の上限の既定値 3 に達している。旧い置き場所の 2 本は移していない
+
 ## 要裁定の判断点
 
 いずれも作業書を介さず、fork の所有者が本セッションで直接裁定した。そのため行頭に仰ぎ先の
@@ -200,3 +221,10 @@ Steam 版 RimWorld の導入先で観測した（確度 A）。DLL は
   固定するか（裁定 2026-09-25。固定する。TASK0002 で扱う）
 - 同梱 DLL 3 件を追跡から外し、パッケージマネージャ経由の取得へ切り替えるか
   （裁定 2026-09-25。切り替える。TASK0002 で扱う）
+- worktree の置き場所を、利用者の Claude Code 設定の WorktreeCreate hook の規則
+  （`$HOME/worktrees/<repo>/<name>`）へ揃えるか（再裁定 2026-09-27。揃える。2026-09-25 の
+  候補は sibling の 2 形だけで、この形を比べていなかった）
+- 計測用の一時の木 `git worktree add ../before`（`tools/measure_tool_output.py` の説明と
+  TASK0009 の記録）を上の規則へ揃えるか（裁定 2026-09-27。揃えない。規則が対象にするのは
+  作業ブランチを載せる worktree で、計測用の木は任意の版に detached で置いてすぐ外す。
+  hook は版を受け取れないので `EnterWorktree` の形は当てはまらない）
