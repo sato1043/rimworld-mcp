@@ -258,6 +258,60 @@ Every tool now declares MCP tool annotations: whether it only reads the game, wh
 | `set_pause` | Pause or unpause the game |
 | `set_time_speed` | Set time speed (0=paused … 4=ultrafast) |
 
+## Playing a colony with the skills (this fork)
+
+This fork (`sato1043/rimworld-mcp`) carries two Claude Code skills in `.claude/skills/`. They are written in Japanese, and so are the notes they keep; [README_ja.md](README_ja.md) describes them in Japanese. They target RimWorld 1.6 without DLC.
+
+| Skill | What it does |
+|---|---|
+| `rimworld-play` | Runs the colony one cycle at a time, in conversation with you |
+| `rimworld-autoplay` | Keeps the colony running without you taking each turn |
+
+**Before you start.** Finish Setup steps 1–3, turn on **Run in background** in the game's options, and load a save. Start Claude Code in the primary checkout of this repository: the skills keep their per-colony notes under its `.claude/play/`, and stop when started from a worktree added with `git worktree`.
+
+The prompts below are the ones used in this fork's live runs, each followed by what it says. Replace `<コロニー名>` with the name of your colony.
+
+### 1. Make the colony's plan file
+
+```
+<コロニー名>の方針ファイルを雛形から作り直して
+```
+
+"Make the plan file of `<colony name>` again from the template." `rimworld-play` writes `.claude/play/<colony name>/plan.md` from its template. The plan file holds the long-term plan, what is being dealt with, and a running log; the skills read and rewrite it every cycle, and git does not track it. Before writing it, the skill reads the map through a tool and the active mods from the game's `ModsConfig.xml`, and asks you for the storyteller and the difficulty, which nothing lets it read.
+
+No tool returns the colony's name, so you choose it; it becomes a directory name. On a colony that already has a plan file, this makes it again. The skill has no rule for the old file, so say so in the prompt if you want it kept.
+
+The long-term plan starts empty. Settle the route to the ending and the research order in conversation and have them written down, so that a cycle woken while nothing is happening has something to check the colony against.
+
+### 2. Run it unattended
+
+```
+rimworld-autoplay で「<コロニー名>」を無人で回して。5 時間枠の上限は 33。権限は Auto モードで回す。バックグラウンド実行は有効化済み
+```
+
+"Run `<colony name>` unattended with rimworld-autoplay. The limit for the 5-hour window is 33. Run in Auto mode. Run in background is already on." The last three sentences answer what the skill asks before it starts; leave one out and it asks.
+
+| Sentence | What it sets |
+|---|---|
+| The limit for the 5-hour window is 33 | Once the 5-hour usage window of your subscription as a whole reaches this share (%), no further cycle is woken. Set it by what you want left for other work: it counts the window whoever used it, and a run does not start while the window is already at it. The weekly limit is not checked |
+| Run in Auto mode | A permission prompt stops an unattended cycle. Run in Auto mode, or add the allow rules the skill lists |
+| Run in background is already on | The game option named above |
+
+The skill also checks that the loaded save belongs to that colony, the shared secret, and the auto-compact window. Then unpause the game — a paused game is taken for one you paused, and nothing is woken — and watch the first cycle come back without a permission prompt before you leave. To stop, tell that session to stop.
+
+How it runs:
+
+- A watcher script reads the game every 1.5 seconds. No LLM is involved in that reading.
+- A letter such as a raid or a death, or an alert of high priority, pauses the game and wakes a cycle. While enemies are on the map a cycle is woken at short intervals, and on a quiet colony once per game day.
+- A subagent runs each cycle: it looks at the colony, gives orders, updates the plan file and resumes the game.
+- What no tool can answer, such as a letter that asks you to choose, leaves the game paused and is reported to you.
+
+Worth knowing:
+
+- It uses your plan's usage. Every cycle woken costs some, so a colony with many events reaches the limit sooner.
+- Run it from the Code tab of the Claude desktop app. To run it from the CLI, a `statusLine` setting that records the usage has to be added to `.claude/settings.local.json` of the main checkout; the skill shows its form when a start is refused for the lack of it. The CLI path has been tried on a live game once, on Windows (Git Bash), and on no other system or shell.
+- An unattended cycle cannot call the tools that amount to cheating, nor those that cannot be undone.
+
 ## Project structure
 
 ```

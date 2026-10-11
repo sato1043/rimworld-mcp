@@ -8,10 +8,11 @@ maintainer. Do not include changes to this file in pull requests sent upstream.
 This file is the source of truth for how work is carried out in this fork. Anything not
 stated here follows the repository's existing conventions and `README.md`.
 
-**Fork-local files** are this file, `CLAUDE.md`, `docs/`, `tools/` and `.claude/skills/`.
-None of them is sent upstream. The fork's lines in `.gitignore` (the `.claude/` rules) are
-fork-local as well, although the file itself is shared with upstream. The rules below
-refer to this list.
+**Fork-local files** are this file, `CLAUDE.md`, `README_ja.md`, `docs/`, `tools/`,
+`.claude/skills/` and `.claude/agents/`.
+None of them is sent upstream. The fork's lines in `.gitignore` (the `.claude/` rules) and
+the section of `README.md` on the skills are fork-local as well, although those files are
+shared with upstream. The rules below refer to this list.
 
 ## Branch layout
 
@@ -137,9 +138,10 @@ uv run --project mcp_server python tools/<script>.py --help
 
 ## Skills
 
-`.claude/skills/` holds fork-local Claude Code skills, and is the only part of `.claude/`
-that is tracked. Only the skills listed in `.gitignore` are tracked; everything else under
-`.claude/` stays local state.
+`.claude/skills/` holds fork-local Claude Code skills, and `.claude/agents/` the subagents
+they start. These are the only parts of `.claude/` that are tracked, and only the skills
+and subagents listed in `.gitignore` are; everything else under `.claude/` stays local
+state.
 
 - Play sessions (`rimworld-play`) run from the main checkout and keep per-save colony
   notes under its `.claude/play/`. A worktree's `.claude/` is removed with the worktree,
@@ -149,6 +151,16 @@ that is tracked. Only the skills listed in `.gitignore` are tracked; everything 
 - A skill's checker lives in the skill's `scripts/`, not in `tools/`, so that it moves
   with the skill. Run it after editing the skill:
   `uv run --project mcp_server python .claude/skills/rimworld-play/scripts/check_skill.py`
+- Unattended play (`rimworld-autoplay`) wakes the subagent `.claude/agents/rimworld-cycle.md`,
+  which preloads `rimworld-play`, and its checkers compare that definition with
+  `rimworld-play`'s SKILL.md. After editing either skill or the definition, run the skill
+  tests and the checker of the definition:
+  `uv run --project mcp_server pytest .claude/skills/rimworld-autoplay/scripts .claude/skills/rimworld-play/scripts`
+  and
+  `uv run --project mcp_server python .claude/skills/rimworld-autoplay/scripts/check_cycle_agent.py`.
+  After a change to the watcher's letter table or to the game's version, also run
+  `check_letter_table.py --rimworld-dir "<where RimWorld is installed>"` from the same
+  directory.
 
 ## Building and installing
 
