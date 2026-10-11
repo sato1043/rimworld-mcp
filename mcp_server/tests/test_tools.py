@@ -457,6 +457,30 @@ def test_get_events_takes_optional_text():
     assert schema["properties"]["since"]["type"] == "string"
 
 
+# ── Game alerts ───────────────────────────────────────────────────────────────
+
+ACTIVE_ALERTS = {"alerts": [
+    {"type": "RimWorld.Alert_StarvationAnimals", "label": "starving animals",
+     "priority": "Medium"},
+    {"type": "AnimalsLogic.Alert_AnimalNeedsRescuing", "label": "animals need rescue",
+     "priority": "Critical"},
+]}
+
+
+def test_get_active_alerts_reads_the_games_list_not_the_computed_one(use_bridge):
+    asked = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        if request.url.path == "/alerts/active":
+            return httpx.Response(200, json=ACTIVE_ALERTS)
+        return httpx.Response(200, json=BRIDGE[request.url.path])
+
+    use_bridge(httpx.MockTransport(handle))
+    assert call("get_active_alerts") == ACTIVE_ALERTS
+    assert asked == ["/alerts/active"]
+
+
 # ── Annotations ───────────────────────────────────────────────────────────────
 
 # What each tool declares, written out here rather than read from main.py, so that a
@@ -481,7 +505,8 @@ READ_TOOLS = [
     "get_power", "get_rooms", "get_zones", "get_prisoners", "get_colony", "get_threats",
     "get_cell_info", "get_cells_info", "list_areas", "list_zones",
     "get_animal_training", "get_caravans", "get_world_factions", "get_world_sites",
-    "get_messages", "get_events", "get_alerts", "get_medical", "get_production",
+    "get_messages", "get_events", "get_alerts", "get_active_alerts", "get_medical",
+    "get_production",
     "get_pawn_backstory", "get_pawn_capacities", "get_pawn_psycasts", "get_pawn_genes",
     "get_pawn_area", "get_stockpile_contents", "get_corpses", "get_drug_policies",
     "get_room_assignments", "get_mechs", "get_incidents", "get_colony_social",

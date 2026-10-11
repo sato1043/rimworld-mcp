@@ -1315,6 +1315,58 @@ namespace MCP
             };
         }
 
+        /// <summary>
+        /// The readout keeps the alerts it shows in a private list; quest, precept and
+        /// scenario alerts join the same list. A game version without the field fails
+        /// the read with an error rather than answering with no alerts.
+        /// </summary>
+        private static readonly System.Reflection.FieldInfo? ActiveAlertsField =
+            typeof(AlertsReadout).GetField("activeAlerts",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// The game's own alerts, as listed on the right of the screen, each with its
+        /// priority. Unlike <see cref="GetAlerts"/>, this is the game's judgement rather
+        /// than this mod's, and it covers alerts added by other mods.
+        /// </summary>
+        public static object GetActiveAlerts()
+        {
+            if (!(Find.UIRoot is UIRoot_Play play) || play.alerts == null) return Error("No active game");
+            if (ActiveAlertsField == null) return Error("This game version does not expose its alerts");
+
+            if (!(ActiveAlertsField.GetValue(play.alerts) is List<Alert> active))
+                return Error("This game version does not expose its alerts");
+            return new { alerts = active.Select(DescribeAlert).ToList() };
+        }
+
+        /// <summary>
+        /// One alert as the readout shows it. An alert that cannot describe itself, such as
+        /// another mod's, is reported with the reason in place of its label and priority,
+        /// so that it does not hide the others.
+        /// </summary>
+        private static object DescribeAlert(Alert alert)
+        {
+            try
+            {
+                return new
+                {
+                    type     = alert.GetType().FullName,
+                    label    = alert.Label,
+                    priority = alert.Priority.ToString()
+                };
+            }
+            catch (Exception ex)
+            {
+                return new
+                {
+                    type     = alert.GetType().FullName,
+                    label    = (string?)null,
+                    priority = (string?)null,
+                    error    = ex.GetType().Name
+                };
+            }
+        }
+
         // ── Medical ───────────────────────────────────────────────────────────
 
         public static List<object> GetMedical()

@@ -188,6 +188,7 @@ Every tool now declares MCP tool annotations: whether it only reads the game, wh
 | `get_enemies` | All hostile pawns |
 | `get_threats` | Danger rating, fires, downed/mental-break colonists |
 | `get_alerts` | Quick health check — food, power, fires, bleeding |
+| `get_active_alerts` | The game's own alerts on screen, including those of other mods, with their priority |
 | `get_weather` | Temperature, wind, season |
 | `get_fertile_cells` | Top-100 fertile map cells |
 | `get_things` | Haulable items grouped by type |

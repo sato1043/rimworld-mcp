@@ -1248,6 +1248,21 @@ async def get_alerts(ctx: Context[ServerSession, AppState]) -> dict:
 
 
 @mcp.tool(annotations=READS_GAME)
+async def get_active_alerts(ctx: Context[ServerSession, AppState]) -> dict:
+    """
+    The game's own alerts, as listed on the right of the screen, each with its type,
+    label and priority (Medium, High or Critical). Covers alerts added by other mods,
+    such as starving or wounded animals. Unlike get_alerts, which this mod computes
+    from a few colony stats, an alert stays here for as long as the game shows it.
+    An alert that cannot describe itself comes with an error instead of a label and
+    priority; it is still on screen.
+    """
+    r = await _client(ctx).get("/alerts/active")
+    r.raise_for_status()
+    return r.json()
+
+
+@mcp.tool(annotations=READS_GAME)
 async def get_medical(ctx: Context[ServerSession, AppState]) -> list:
     """
     All pawns (colonists, prisoners, visitors) with tendable hediffs.

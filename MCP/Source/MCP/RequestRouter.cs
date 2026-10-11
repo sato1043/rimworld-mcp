@@ -42,6 +42,7 @@ namespace MCP
             "/world/sites"       => Ok(GameStateReader.GetWorldSites()),
             "/messages"          => Ok(GameStateReader.GetMessages()),
             "/alerts"            => Ok(GameStateReader.GetAlerts()),
+            "/alerts/active"     => Ok(GameStateReader.GetActiveAlerts()),
             "/medical"           => Ok(GameStateReader.GetMedical()),
             "/production"        => Ok(GameStateReader.GetProduction()),
             "/apparel"           => Ok(GameStateReader.GetApparel()),
