@@ -1130,6 +1130,9 @@ CP6 の起動・ステップ 9 の前の実機の後片付けで切った）:
 **2026-10-11 追補** — 統合の後の裁定の記録（残課題の受容・upstream へ送らない）。
 実働 約 10 分。
 
+**2026-10-11 追補** — 後片付け（本体での確かめ・ビルドとジャンクションの張り直し・
+worktree 3 つとブランチ 2 本の削除）と、その記録。実働 約 15 分。
+
 ## 検証
 
 ### 概要
@@ -3266,6 +3269,25 @@ uv run --project mcp_server python .claude/skills/rimworld-play/scripts/check_sk
   張り直し、worktree 4 つ（`active-alerts`・`rescue-bed`・`live-build`・このブランチ）と
   ブランチ 3 本の削除である。統合の後の木を本体で回す確かめ（pytest と照合器）も、
   このセッションからは打てない
+- 追記（同日・後片付け）: 利用者の指示で、後片付けをこのセッションが行った。上の
+  「このセッションからは打てない」は誤りだった。Write と Edit は本体のパスを断るが、
+  Bash からは本体で走らせることも書くこともできた（試さずに述べていた）
+    - 追補の squash は 2 度に分かれた。1 度目（`66b00a2`）は CONTRIBUTING.md の分を
+      欠いたので、利用者が抜けた分を畳んだ（`845c3ab`。3 ファイル・52 行）。develop の
+      木は、このブランチの先端と同じである
+    - 本体（develop・`845c3ab`）で、pytest は 740 passed、`check_skill.py` と
+      `check_cycle_agent.py` は exit 0 だった
+    - 本体でビルドし（0 エラー・0 警告）、ゲームが動いていないのを見てから、`Mods\MCP` の
+      ジャンクションを `live-build` から本体の `MCP` へ張り直した。張り直しはリンク
+      だけを外して作り直し、`live-build` の中身には触れていない
+    - CP6 のレポート（`.claude/tmp/review/20261011-TASK0018/` の 17 ファイル）を、本体の
+      同じ場所へ写した（`diff -rq` で差なし）
+    - worktree 3 つ（`live-build`・`active-alerts`・`rescue-bed`）とブランチ 2 本
+      （`task/TASK0018-active-alerts`・`task/TASK0018-rescue-bed`）を消した。消す前に、
+      中身が develop に在ることを木と patch-id で確かめた。3 つの worktree に在った
+      追跡の外のものは、ビルドの出力と `.venv` だけだった
+    - 残るのは、このセッションが居る worktree とそのブランチの削除である。ゲームを
+      起動して本体のビルドを読ませる確かめは、回していない
 
 ## 機能への反映
 
