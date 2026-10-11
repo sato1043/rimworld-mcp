@@ -38,6 +38,11 @@ git push origin upstream/main:refs/heads/main
 
 ### Sending a change upstream
 
+**Changes made in this fork are not sent upstream unless the upstream maintainer asks for
+them.** The fork does not put pull requests nobody requested in the mainline's way. The
+steps below are for when such a request comes, and the one-purpose rule above keeps every
+change in a shape that can answer it.
+
 Cut the branch from `upstream/main`, not from `develop`. `develop` carries the fork-local
 files, which do not belong upstream.
 
