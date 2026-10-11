@@ -252,9 +252,27 @@ namespace MCP
 
             if (target == null) return NotFound("target_id (must be a downed pawn on the map)");
 
-            var job = JobMaker.MakeJob(JobDefOf.Rescue, target);
+            // Checked first, as the game's own rescue order does, so that the reason comes back
+            // instead of a job that ends as soon as it starts.
+            if (rescuer.Downed) return Bad($"{rescuer.Name.ToStringShort} is downed and cannot rescue");
+            if (!rescuer.CanReserveAndReach(target, PathEndMode.OnCell, Danger.Deadly, ignoreOtherReservations: true))
+                return Bad($"{rescuer.Name.ToStringShort} cannot reach {target.LabelShort}");
+
+            // The rescue job carries the pawn to a bed and reserves that bed before it starts,
+            // so it needs one. Found the way the game's own rescue order finds it: a free bed
+            // first, then one that others have reserved.
+            var bed = RestUtility.FindBedFor(target, rescuer, checkSocialProperness: false, ignoreOtherReservations: false)
+                   ?? RestUtility.FindBedFor(target, rescuer, checkSocialProperness: false, ignoreOtherReservations: true);
+            if (bed == null)
+                return Bad($"No bed that {rescuer.Name.ToStringShort} can carry {target.LabelShort} to; " +
+                           $"build or free one that {target.LabelShort} may use");
+
+            var job = JobMaker.MakeJob(JobDefOf.Rescue, target, bed);
+            job.count = 1;
             rescuer.jobs.StartJob(job, JobCondition.InterruptForced);
-            return Ok(new { rescuer = rescuer.Name.ToStringShort, rescuing = target.LabelShort });
+            // StartJob ends a job that fails to reserve its targets at once, without a word.
+            if (rescuer.CurJob != job) return Bad($"The rescue job did not start for {rescuer.Name.ToStringShort}");
+            return Ok(new { rescuer = rescuer.Name.ToStringShort, rescuing = target.LabelShort, bed = bed.LabelShort });
         }
 
         // ── Equipment / colonist management ──────────────────────────────────
