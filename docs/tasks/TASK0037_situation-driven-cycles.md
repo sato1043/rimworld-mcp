@@ -5,6 +5,11 @@ features: []
 requirements: []
 depends-on:
  - TASK0018_outer-play-loop
+user-reach: high
+dev-reach: high
+drive: high
+irreversible: low
+hazard: none
 ---
 
 # サイクルを状況から起こす
@@ -94,6 +99,8 @@ depends-on:
   判断」は、非目標の「攻略知識の変更」と当たる。送ることを勧めたエージェントが、この
   食い違いを見落としていた。非目標は改めず、TASK0046 として別に起こす（エージェントの
   推奨を採った）。この作業に残るのは、指示の無い追いが同じ間隔で続く件である
+- **優先度**（2026-10-12・ユーザー）: `user-reach`・`dev-reach`・`irreversible`・
+  `hazard` はエージェントの候補を承認した。`drive` は high と判定した
 
 ## stakeholder 未裁定の残課題
 
