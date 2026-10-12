@@ -294,7 +294,7 @@ rimworld-autoplay で「<コロニー名>」を無人で回して。5 時間枠�
 | Sentence | What it sets |
 |---|---|
 | The limit for the 5-hour window is 33 | Once the 5-hour usage window of your subscription as a whole reaches this share (%), no further cycle is woken. Set it by what you want left for other work: it counts the window whoever used it, and a run does not start while the window is already at it. The weekly limit is not checked |
-| Run in Auto mode | A permission prompt stops an unattended cycle. Run in Auto mode, or add the allow rules the skill lists |
+| Run in Auto mode | A permission prompt stops an unattended cycle. Run in Auto mode. In Manual mode every write of the plan file asks, and no allow rule can answer it ahead of time |
 | Run in background is already on | The game option named above |
 
 The skill also checks that the loaded save belongs to that colony, the shared secret, and the auto-compact window. Then unpause the game — a paused game is taken for one you paused, and nothing is woken — and watch the first cycle come back without a permission prompt before you leave. To stop, tell that session to stop.
@@ -311,6 +311,7 @@ Worth knowing:
 - It uses your plan's usage. Every cycle woken costs some, so a colony with many events reaches the limit sooner.
 - Run it from the Code tab of the Claude desktop app. To run it from the CLI, a `statusLine` setting that records the usage has to be added to `.claude/settings.local.json` of the main checkout; the skill shows its form when a start is refused for the lack of it. The CLI path has been tried on a live game once, on Windows (Git Bash), and on no other system or shell.
 - An unattended cycle cannot call the tools that amount to cheating, nor those that cannot be undone.
+- An unattended cycle can write one file, the colony's plan file. A hook in the cycle's definition stops any other write. For that guard to work, the main checkout has to be a trusted folder, Claude Code has to be 2.1.295 or later, `python` has to start Python 3.13 or later (on its own, apart from the `uv` environment), and no setting may turn hooks off (`disableAllHooks`). The skill asks about these before it starts.
 
 ## Project structure
 

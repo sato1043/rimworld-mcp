@@ -1,4 +1,5 @@
-"""Check that the cycle subagent cannot call the tools that rimworld-play holds back.
+"""Check that the definition a cycle runs as holds the tools, the write gate and the keys
+a cycle is meant to have, and no other.
 
 The rimworld-play skill names two lists under 判断の原則 in its SKILL.md: the tools that
 count as cheating, which need the player's leave, and the tools whose effect cannot be
@@ -20,20 +21,39 @@ it starts is configured apart from it. So the definition must also name in `tool
 tools a cycle holds, exactly GRANTED: through any other tool (a command, a browser, a
 subagent of its own) the cycle could reach the bridge without the MCP tools.
 
-Run it after changing the definition, the skill or the MCP server's tools:
+Write and Edit are among the tools a cycle holds, and they reach any file. So the
+definition must also run the write gate (write_gate.py) before either: its `hooks` block
+has to be WRITE_GATE, line for line. The block is compared whole, not read, so that a hook
+taken out, a matcher that leaves a tool out, another script, and a gate that lets the
+call through when it cannot be started all fail alike.
+
+What is compared is what cycle_agent.frontmatter reads, and Claude Code reads the file
+with a YAML reader of its own. The two are kept from parting in the ways this check knows
+of: the frontmatter holds exactly the keys in KEYS (a key this check does not look at,
+such as one that sets how permissions are asked, is not let by), and cycle_agent refuses
+the characters and the forms of a value the two would read apart. How Claude Code itself
+reads a definition is not something this check can see.
+
+Claude Code loads one definition of a name from .claude/agents/ and its folders, and
+which one is not said. So no other file there may name the cycle: one that does could be
+the definition that runs, with whatever tools and hooks it gives itself.
+
+Run it after changing the definition, the skill or the MCP server's tools, and before a
+run is left alone (the rimworld-autoplay skill does):
 
     uv run --project mcp_server python .claude/skills/rimworld-autoplay/scripts/check_cycle_agent.py
 
-Exit status: 0 when every definition grants GRANTED and takes away the listed tools, both
-exactly; 1 when one grants or takes away another set, or the skill lists a name that is
-not a tool; 2 when the check cannot be trusted - a file is missing, the frontmatter is not
-in a form this reads, a list is not found or is empty, or the checker failed. A developer
-runs this check, not the parent, so an UNTRUSTED line goes to standard error.
+Exit status: 0 when every definition holds KEYS, grants GRANTED, takes away the listed
+tools and runs the write gate, each exactly, and no other file names the cycle; 1 when one
+does not, or the skill lists a name that is not a tool; 2 when the check cannot be trusted
+- a file is missing, the frontmatter is not in a form this reads, a list is not found or
+is empty, or the checker failed. An UNTRUSTED line goes to standard error.
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
 import pathlib
 import re
 import sys
@@ -60,6 +80,26 @@ HELD_BACK = {
 # which a cycle run in the background returns.
 GRANTED = frozenset({f"mcp__{SERVER}", "Read", "Write", "Edit", "Glob", "Grep", "ToolSearch",
                      "SubagentHandback"})
+# The keys a definition holds, and no other: a key decides what a cycle may do (the mode
+# permissions are asked in, the servers it reaches), so one this check does not look at
+# is not passed over.
+KEYS = frozenset({"name", "description", "skills", "model", "effort", "tools", "disallowedTools",
+                  "hooks"})
+# All of what is under `hooks:` in a definition, as cycle_agent.frontmatter gives it. The
+# hook runs before Write and Edit; `onFailure: block` stops the call when the gate cannot
+# be started, ends with a status it does not know or runs out of time, which Claude Code
+# lets through unless told otherwise. A definition that is to run another hook as well
+# needs this block, the wording of the problem below and the docstring changed together.
+WRITE_GATE = """\
+  PreToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: python
+          args:
+            - "${CLAUDE_PROJECT_DIR}/.claude/skills/rimworld-autoplay/scripts/write_gate.py"
+          timeout: 10
+          onFailure: block"""
 
 LEAD = re.compile(r"^- \*\*([^*]+)\*\*")
 BACKTICKED = re.compile(r"`([a-z][a-z0-9_]*)`")
@@ -108,6 +148,24 @@ def tool_list(value: str | list[str]) -> set[str]:
     return {entry.strip().strip("'\"") for entry in entries if entry.strip()}
 
 
+def first_difference(hooks: str | list[str]) -> str:
+    """Where a `hooks` field that is not WRITE_GATE first parts from it, for the one who
+    changed it. The lines are counted in the block, comment and blank lines left out, and
+    not in the file."""
+    if not isinstance(hooks, str):
+        return f"it is the list {hooks!r}, not a block"
+    if hooks and not hooks.startswith(" "):
+        return f"it is the value {hooks!r} on the line of the key, not a block"
+    for number, (line, wanted) in enumerate(
+            itertools.zip_longest(hooks.split("\n") if hooks else [], WRITE_GATE.split("\n")),
+            start=1):
+        if line != wanted:
+            found = "nothing" if line is None else repr(line)
+            return (f"line {number} of the block is {found}, where "
+                    f"{'nothing more' if wanted is None else repr(wanted)} is expected")
+    raise ValueError("the hooks field is the write gate")
+
+
 def check(skill_md: str, definition: str, tools: dict[str, set[str]]) -> tuple[str, list[str]]:
     """Return a summary of what was compared and the problems found."""
     held_back = held_back_tools(skill_md)
@@ -117,6 +175,12 @@ def check(skill_md: str, definition: str, tools: dict[str, set[str]]) -> tuple[s
         raise Untrusted(str(e)) from e
     disallowed = tool_list(fields.get("disallowedTools", []))
     problems = []
+    for key in sorted(set(fields) - KEYS):
+        problems.append(f"the definition sets {key}, which this check does not look at")
+    for key in sorted(KEYS - set(fields) - {"tools", "disallowedTools", "hooks"}):
+        problems.append(f"the definition does not set {key}")
+    if "name" in fields and fields["name"] != CYCLE_AGENT:
+        problems.append(f"the definition is named {fields['name']!r}, not {CYCLE_AGENT!r}")
     taken_away = set()
     for name, names in held_back.items():
         for tool in names:
@@ -136,8 +200,33 @@ def check(skill_md: str, definition: str, tools: dict[str, set[str]]) -> tuple[s
             problems.append(f"tools grants {tool}, which a cycle does not hold")
         for tool in sorted(GRANTED - granted):
             problems.append(f"tools does not grant {tool}")
+    if "hooks" not in fields:
+        problems.append("the definition has no hooks field, so a cycle can write any file")
+    elif fields["hooks"] != WRITE_GATE:
+        problems.append("hooks is not the write gate (WRITE_GATE in check_cycle_agent.py, held "
+                        f"to as text): {first_difference(fields['hooks'])}")
     summary = ", ".join(f"{name}: {len(names)}" for name, names in held_back.items())
     return summary, problems
+
+
+def others_naming_the_cycle(agents: list[pathlib.Path]) -> list[pathlib.Path]:
+    """The files beside the definitions, in their folders and the folders under them, that
+    name the cycle anywhere in their text. The text is searched and not read as a
+    definition: a file this could not read as one would otherwise go unseen, and Claude
+    Code may read it. A name written so that the text does not hold it (an escape inside
+    quotes) is not found."""
+    given = {agent.resolve() for agent in agents}
+    found = []
+    for folder in sorted({agent.parent for agent in agents}):
+        for path in sorted(folder.rglob("*")):
+            if path.is_file() and path.resolve() not in given:
+                try:
+                    text = path.read_bytes().decode("utf-8", errors="replace")
+                except OSError as e:
+                    raise Untrusted(f"cannot read {path}: {e}") from e
+                if CYCLE_AGENT in text:
+                    found.append(path)
+    return found
 
 
 def run(skill: pathlib.Path, agents: list[pathlib.Path], main_py: pathlib.Path) -> int:
@@ -157,14 +246,18 @@ def run(skill: pathlib.Path, agents: list[pathlib.Path], main_py: pathlib.Path) 
     for name, definition in definitions.items():
         summary, found = check(skill_md, definition, tools)
         problems += [f"{name}: {problem}" for problem in found]
+    for other in others_naming_the_cycle(agents):
+        problems.append(f"{other} names {CYCLE_AGENT} too: Claude Code loads one definition of "
+                        "a name, and it may be that one")
     print(f"held back by SKILL.md: {summary}; definitions: {', '.join(definitions)}")
     for problem in problems:
         print(problem)
     if problems:
         print(f"FAILED: {len(problems)} problem(s)")
         return 1
-    print("OK: every definition grants only the tools a cycle holds and takes away every tool "
-          "the skill holds back")
+    print("OK: every definition holds only the keys and the tools a cycle is meant to have, "
+          "takes away every tool the skill holds back and runs the write gate, and no other "
+          "file names the cycle")
     return 0
 
 

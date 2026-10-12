@@ -41,6 +41,24 @@ disallowedTools:
   - mcp__rimworld__delete_area
   - mcp__rimworld__clear_area
   - mcp__rimworld__remove_bill
+# Write and Edit reach any file, the ways a session is run among them, so each call goes
+# through scripts/write_gate.py of the rimworld-autoplay skill first: it lets a colony's
+# plan file through and stops any other path. `onFailure: block` stops the call when the
+# gate cannot be started or runs out of time; Claude Code would otherwise let it through.
+# scripts/check_cycle_agent.py checks that this block is the one it expects, line for line,
+# and that the frontmatter holds no key it does not know. It reads only plain forms: three
+# hyphens anywhere but on the closing line, a tab, a blank other than a space, or a quote
+# left open stop the check and the parent's reading of `model`, and with them the run.
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: python
+          args:
+            - "${CLAUDE_PROJECT_DIR}/.claude/skills/rimworld-autoplay/scripts/write_gate.py"
+          timeout: 10
+          onFailure: block
 ---
 
 # 無人の 1 サイクル
@@ -74,6 +92,15 @@ disallowedTools:
 - ズルに当たる tool と取り消せない操作の tool は、この定義で除いてあり呼べない。要るときは
   方針ファイルの「利用者に頼むこと」へ積む。tool に無い操作と、選択肢のある letter も
   同じ節へ積む
+- Write と Edit で書けるのは、すでに在るコロニーの方針ファイル
+  （`.claude/play/<コロニー名>/plan.md`）だけである。ほかのパスは、この定義の hook が
+  確認を出さずに断る（理由は `refused:` を含む 1 行で返る）。断られたら、ほかのファイルへ
+  書き直さず、同じ呼び出しを繰り返さない。利用者の操作が要ることは「利用者に頼むこと」へ
+  積み、返す行に、書き込みを断られたことを含める
+- 方針ファイルへの書き込みが断られたら、理由が何であっても、このサイクルは何も
+  書き残せない。同じ書き込みを試し直さない。ゲームが走っていれば `set_pause` で止め、
+  止めたまま返す。原因は見分けない（返った理由から、親と利用者が読む）。返す行は
+  「返すもの」の 2 つ目の形にする
 - `attack_target` は、敵対する相手（`get_enemies`・`get_threats` に出る者）だけを狙う。
   マップ上のどの pawn でも狙えるので、入植者・中立の訪問者・交易の隊商を狙うと取り消せ
   ない
@@ -93,4 +120,13 @@ disallowedTools:
 
 ```
 <何が起きて何をしたか、再開した速度か止めたままの理由を 1 文で>／利用者に頼むこと: <件数か「なし」>
+```
+
+方針ファイルへの書き込みが断られた回は、経過のメモにも「利用者に頼むこと」にも書けない。
+件数の代わりに、頼みたかったことそのものをこの行で運ぶ。返った理由は、この行に限り、
+頭から 400 字までをそのまま写す（言い換えると、親と利用者が原因を読めなくなる。原因を
+分ける語は理由の頭に在る）。
+
+```
+方針ファイルを書けなかった／<何が起きて何をしたかを 1 文で>／頼みたかったこと: <1 文か「なし」>／返った理由: <頭から 400 字>
 ```
