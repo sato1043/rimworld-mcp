@@ -8,6 +8,11 @@ depends-on:
 relates-to:
  - TASK0016_rimworld-play-skill
  - TASK0040_cycle-write-scope
+user-reach: low
+dev-reach: high
+drive: high
+irreversible: low
+hazard: none
 ---
 
 # サイクルに渡る tool の範囲を、無人の運用の前に確かめる
@@ -133,10 +138,12 @@ TASK0018 の外側のループは、誰も確認しない間にサイクルを�
   （エージェントの推奨を採った）。問題の節へ、守りが外れる条件の一覧・守りを入れる前から
   在るもの・ToolSearch で届く tool の測り方を足し、「定義が読み直されない」を正した。
   守りの確かめを持つことは、非目標の但し書きから目標へ移した
+- **優先度**（2026-10-12・ユーザー）: `user-reach`・`dev-reach`・`irreversible`・
+  `hazard` はエージェントの候補を承認した。`drive` は high と判定した
 
 ## stakeholder 未裁定の残課題
 
-- 優先度の 4 軸と `drive`
+- 優先度の 4 軸と `drive`（裁定 2026-10-12）
 - 書ける範囲の守りの確かめ方。害の無い先へ書き込みを試すか、書かずに hook の有無を読む
   口を探すか（問題の節）。前者は外れる条件を数えずに拾うが、外れていたときに書く
 - 守りを入れる前から在るもの（設定の hooks・`.git/config`・無視された定義とスキル）を、

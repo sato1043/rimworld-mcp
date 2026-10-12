@@ -8,6 +8,11 @@ depends-on:
 relates-to:
  - TASK0016_rimworld-play-skill
  - TASK0018_outer-play-loop
+user-reach: low
+dev-reach: high
+drive: high
+irreversible: low
+hazard: none
 ---
 
 # 方針ファイルを読む側が、無人のサイクルの書いた文をどう扱うかを決める
@@ -65,10 +70,12 @@ security M5）である。どれも手順とスクリプトの読み取りで、
 - **起票**（2026-10-12・ユーザー）: TASK0040 の CP6 の束 G のうち 2 件（security-offensive
   M3・security M5）を、新しい作業書へ送る（エージェントの推奨を採った）。読み手の列挙と
   扱いの線引きに新しい設計が要るためである
+- **優先度**（2026-10-12・ユーザー）: `user-reach`・`dev-reach`・`irreversible`・
+  `hazard` はエージェントの候補を承認した。`drive` は high と判定した
 
 ## stakeholder 未裁定の残課題
 
-- 優先度の 4 軸と `drive`
+- 優先度の 4 軸と `drive`（裁定 2026-10-12）
 - 対話のセッションが、方針ファイルのどの節までを方針として読むか（すべてをデータとすると、
   サイクルが共有する記憶として働かなくなる）
 - 承認を、節の見出しのほかの何で表すか（利用者だけが書ける場所へ移す・照合の控えと
